@@ -6,10 +6,15 @@ from pathlib import Path
 
 from .models import (
     CandidateRecord,
+    CandidateOutcomeRecord,
+    EvaluationReport,
     EntityType,
+    HistoricalSnapshotRecord,
+    LearningRecord,
     ListingStatus,
     QuarterlyRecord,
     RunManifestModel,
+    SourceGrowthRecord,
     UniverseRecord,
 )
 
@@ -144,3 +149,45 @@ def validate_candidate_records(records: list[dict]) -> list[CandidateRecord]:
             )
         )
     return output
+
+
+def validate_historical_snapshot(snapshot: HistoricalSnapshotRecord) -> HistoricalSnapshotRecord:
+    if not snapshot.snapshot_id.strip():
+        raise ValueError('snapshot_id is required')
+    if not snapshot.equity_state:
+        raise ValueError('historical snapshot requires equity_state')
+    if not snapshot.evidence_state:
+        raise ValueError('historical snapshot requires evidence_state')
+    if not snapshot.coverage_symbols:
+        raise ValueError('historical snapshot requires coverage_symbols')
+    return snapshot
+
+
+def validate_candidate_outcomes(records: list[CandidateOutcomeRecord]) -> list[CandidateOutcomeRecord]:
+    for r in records:
+        if not r.canonical_entity_id.startswith('KW:'):
+            raise ValueError(f'invalid canonical_entity_id for {r.symbol}')
+        if not (r.published and r.evaluable):
+            raise ValueError(f'candidate {r.symbol} must be published and evaluable in phase3')
+    return records
+
+
+def validate_evaluation_report(report: EvaluationReport) -> EvaluationReport:
+    if report.evaluated_count < report.observed_count:
+        raise ValueError('evaluated_count cannot be less than observed_count')
+    if report.unavailable_count != report.evaluated_count - report.observed_count:
+        raise ValueError('unavailable_count mismatch')
+    return report
+
+
+def validate_learning_records(records: list[LearningRecord]) -> list[LearningRecord]:
+    for r in records:
+        if 'realized_return' not in r.outcome:
+            raise ValueError(f'missing realized_return for {r.symbol}')
+    return records
+
+
+def validate_source_growth_record(record: SourceGrowthRecord) -> SourceGrowthRecord:
+    if not record.source_coverage_over_time:
+        raise ValueError('source coverage cannot be empty')
+    return record

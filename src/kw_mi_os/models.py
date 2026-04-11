@@ -162,3 +162,83 @@ class RunManifestModel:
     validations: list[str]
     warnings: list[str]
     failures: list[str]
+
+
+@dataclass(frozen=True)
+class HistoricalEquityState:
+    symbol: str
+    quarter_end: date
+    fiscal_period: str
+    filing_date: date
+    net_profit: float
+    eps: float
+    total_equity: float
+
+
+@dataclass(frozen=True)
+class HistoricalEvidenceState:
+    canonical_entity_id: str
+    symbol: str
+    source_name: str
+    source_type: str
+    evidence_type: str
+    polarity: float
+    confidence: float
+    timestamp: datetime
+
+
+@dataclass(frozen=True)
+class HistoricalSnapshotRecord:
+    snapshot_id: str
+    as_of_date: date
+    equity_state: list[HistoricalEquityState]
+    evidence_state: list[HistoricalEvidenceState]
+    coverage_symbols: list[str]
+
+
+@dataclass(frozen=True)
+class CandidateOutcomeRecord:
+    symbol: str
+    canonical_entity_id: str
+    published: bool
+    evaluable: bool
+    outcome_status: str
+    publish_rank: int
+    publish_score: float
+    realized_return: float | None
+    direction_result: str | None
+    publish_trust_score: float
+    publish_missing_data_penalty: float
+
+
+@dataclass(frozen=True)
+class EvaluationReport:
+    snapshot_id: str
+    evaluated_count: int
+    observed_count: int
+    unavailable_count: int
+    hit_rate: float | None
+    average_realized_return: float | None
+    rank_position_summary: dict[str, float]
+    signal_contribution_summary: dict[str, dict[str, float]]
+    trust_weighted_quality_summary: dict[str, float]
+    missing_data_penalty_impact_summary: dict[str, float]
+    limitations: list[str]
+
+
+@dataclass(frozen=True)
+class LearningRecord:
+    symbol: str
+    snapshot_id: str
+    features: dict[str, float]
+    outcome: dict[str, float | str]
+
+
+@dataclass(frozen=True)
+class SourceGrowthRecord:
+    snapshot_id: str
+    as_of_date: date
+    source_coverage_over_time: list[dict[str, object]]
+    source_participation_in_candidates: dict[str, int]
+    source_acceptance_rejection_counts: dict[str, dict[str, int]]
+    source_contribution_eligibility_summary: dict[str, float]
