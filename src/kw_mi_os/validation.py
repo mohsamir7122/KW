@@ -12,6 +12,8 @@ from .models import (
     CandidateRecord,
     CandidateOutcomeRecord,
     DecisionQualityReport,
+    DashboardSnapshot,
+    DailyReviewSummary,
     EvaluationReport,
     EntityType,
     PortfolioProposal,
@@ -23,6 +25,9 @@ from .models import (
     ListingStatus,
     OperatingRunRecord,
     OperatingStatusSnapshot,
+    ConsolidatedLatestReport,
+    ReportingMetadata,
+    ReviewChecklist,
     FreshnessCheck,
     FailureRecord,
     PhaseCompletionRecord,
@@ -363,3 +368,73 @@ def validate_operating_status_snapshot(snapshot: OperatingStatusSnapshot) -> Ope
     if snapshot.scheduler_status not in {'ready', 'not_ready'}:
         raise ValueError('invalid scheduler status')
     return snapshot
+
+
+def validate_dashboard_snapshot(snapshot: DashboardSnapshot) -> DashboardSnapshot:
+    if snapshot.status_bucket not in {'healthy', 'degraded', 'failed'}:
+        raise ValueError('invalid dashboard status_bucket')
+    required_sections = (
+        snapshot.decision_quality_summary,
+        snapshot.benchmark_summary,
+        snapshot.portfolio_summary,
+        snapshot.rebalance_summary,
+        snapshot.alert_summary,
+    )
+    if any(not section for section in required_sections):
+        raise ValueError('dashboard snapshot missing required summary sections')
+    return snapshot
+
+
+def validate_daily_review_summary(summary: DailyReviewSummary) -> DailyReviewSummary:
+    if summary.system_state not in {'healthy', 'degraded', 'failed'}:
+        raise ValueError('invalid daily review system_state')
+    if summary.system_state == 'failed' and summary.run_completed_successfully:
+        raise ValueError('contradictory summary state: failed cannot be successful')
+    if not summary.inspect_first:
+        raise ValueError('daily review inspect_first cannot be empty')
+    return summary
+
+
+def validate_review_checklist(checklist: ReviewChecklist) -> ReviewChecklist:
+    if not checklist.ordered:
+        raise ValueError('review checklist must be ordered')
+    if not checklist.items:
+        raise ValueError('review checklist requires items')
+    valid_severity = {'critical': 4, 'high': 3, 'medium': 2, 'low': 1}
+    last_priority = 0
+    last_severity_weight = 99
+    for item in checklist.items:
+        if item.severity not in valid_severity:
+            raise ValueError(f'invalid checklist severity {item.severity}')
+        if item.priority <= last_priority:
+            raise ValueError('checklist priorities must be strictly increasing')
+        if valid_severity[item.severity] > last_severity_weight:
+            raise ValueError('checklist severity must be non-increasing by priority')
+        last_priority = item.priority
+        last_severity_weight = valid_severity[item.severity]
+    return checklist
+
+
+def validate_reporting_metadata(metadata: ReportingMetadata) -> ReportingMetadata:
+    if metadata.phase != 'phase7':
+        raise ValueError('reporting metadata phase must be phase7')
+    if not metadata.upstream_inputs:
+        raise ValueError('reporting metadata upstream_inputs required')
+    if not metadata.generated_outputs:
+        raise ValueError('reporting metadata generated_outputs required')
+    return metadata
+
+
+def validate_consolidated_latest_report(report: ConsolidatedLatestReport) -> ConsolidatedLatestReport:
+    required = [report.dashboard_snapshot, report.daily_review_summary, report.operator_checklist, report.reporting_metadata]
+    if any(not section for section in required):
+        raise ValueError('consolidated latest report missing required section')
+    return report
+
+
+def validate_phase7_required_inputs(required_paths: list[Path]) -> list[Path]:
+    missing = [path for path in required_paths if not path.exists()]
+    if missing:
+        missing_text = ', '.join(str(path) for path in missing)
+        raise ValueError(f'phase7 missing upstream artifacts: {missing_text}')
+    return required_paths
