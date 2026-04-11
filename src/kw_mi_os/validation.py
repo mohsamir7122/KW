@@ -18,11 +18,18 @@ from .models import (
     PortfolioSnapshot,
     RebalanceAction,
     RiskControlResult,
+    FailureRecord,
+    FreshnessCheck,
+    HealthStatusReport,
+    OperatingRunRecord,
+    OperatingStatusSnapshot,
+    PhaseCompletionRecord,
     HistoricalSnapshotRecord,
     LearningRecord,
     ListingStatus,
     QuarterlyRecord,
     RunManifestModel,
+    SchedulerStatus,
     SignalUsefulnessReport,
     SourceGrowthRecord,
     UniverseRecord,
@@ -299,3 +306,88 @@ def validate_alert_records(alerts: list[AlertRecord]) -> list[AlertRecord]:
         if not alert.alert_type:
             raise ValueError('alert_type is required')
     return alerts
+
+
+def validate_scheduler_status(status: SchedulerStatus) -> SchedulerStatus:
+    if status.scheduled_run == status.ad_hoc_run:
+        raise ValueError('scheduler status must set exactly one run mode')
+    if not status.run_trigger_reason:
+        raise ValueError('run_trigger_reason is required')
+    if status.next_planned_run is None:
+        raise ValueError('next_planned_run is required')
+    return status
+
+
+def validate_freshness_checks(checks: list[FreshnessCheck]) -> list[FreshnessCheck]:
+    if not checks:
+        raise ValueError('freshness checks cannot be empty')
+    for check in checks:
+        if check.required and not check.exists and check.status != 'missing_required_artifact':
+            raise ValueError(f'invalid required-artifact status for {check.artifact}')
+        if check.exists and check.age_minutes is None:
+            raise ValueError(f'age_minutes required for existing artifact {check.artifact}')
+    return checks
+
+
+def validate_failure_records(records: list[FailureRecord]) -> list[FailureRecord]:
+    valid_classes = {
+        'missing_required_artifact',
+        'stale_reference_data',
+        'stale_runtime_outputs',
+        'insufficient_candidate_depth',
+        'degraded_internet_sources',
+        'validation_failure',
+        'scheduler_state_incomplete',
+        'portfolio_quality_below_threshold',
+        'excessive_alert_severity',
+    }
+    valid_severity = {'warning', 'critical'}
+    for record in records:
+        if record.failure_class not in valid_classes:
+            raise ValueError(f'invalid failure class: {record.failure_class}')
+        if record.severity not in valid_severity:
+            raise ValueError(f'invalid failure severity: {record.severity}')
+    return records
+
+
+def validate_phase_completion(records: list[PhaseCompletionRecord]) -> list[PhaseCompletionRecord]:
+    if not records:
+        raise ValueError('phase completion records cannot be empty')
+    phases = {r.phase for r in records}
+    for required in {'phase3', 'phase4', 'phase5', 'phase6'}:
+        if required not in phases:
+            raise ValueError(f'missing phase completion record: {required}')
+    return records
+
+
+def validate_health_status_report(report: HealthStatusReport) -> HealthStatusReport:
+    validate_freshness_checks(report.checks)
+    validate_failure_records(report.failures)
+    validate_phase_completion(report.phase_completion)
+    if report.healthy and report.failures:
+        raise ValueError('contradictory health state: healthy with failures')
+    if report.failed and report.healthy:
+        raise ValueError('contradictory health state: failed and healthy')
+    if report.failed and not any(f.severity == 'critical' for f in report.failures):
+        raise ValueError('failed health state requires critical failure')
+    return report
+
+
+def validate_operating_status_snapshot(snapshot: OperatingStatusSnapshot) -> OperatingStatusSnapshot:
+    validate_scheduler_status(snapshot.scheduler_status)
+    validate_health_status_report(snapshot.health_status)
+    if snapshot.run_record.status != snapshot.health_status.overall_status:
+        raise ValueError('run record status must match health overall_status')
+    if not snapshot.top_operator_priorities:
+        raise ValueError('top_operator_priorities cannot be empty')
+    return snapshot
+
+
+def validate_operating_run_record(record: OperatingRunRecord) -> OperatingRunRecord:
+    if not record.run_id:
+        raise ValueError('operating run_id is required')
+    if record.scheduled_run == record.ad_hoc_run:
+        raise ValueError('operating run must be scheduled xor ad_hoc')
+    if record.status not in {'healthy', 'degraded', 'failed'}:
+        raise ValueError(f'invalid operating run status: {record.status}')
+    return record

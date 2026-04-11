@@ -382,3 +382,81 @@ class AlertRecord:
     severity: str
     message: str
     context: dict[str, object]
+
+
+@dataclass(frozen=True)
+class OperatingRunRecord:
+    run_id: str
+    mode: str
+    trigger_reason: str
+    scheduled_run: bool
+    ad_hoc_run: bool
+    started_at_utc: str
+    completed_at_utc: str
+    status: str
+
+
+@dataclass(frozen=True)
+class SchedulerStatus:
+    scheduler_ready: bool
+    deterministic_sample_mode: bool
+    last_successful_run: str | None
+    next_planned_run: str | None
+    run_trigger_reason: str
+    scheduled_run: bool
+    ad_hoc_run: bool
+
+
+@dataclass(frozen=True)
+class FreshnessCheck:
+    artifact: str
+    exists: bool
+    updated_at_utc: str | None
+    age_minutes: float | None
+    stale_threshold_minutes: int
+    status: str
+    required: bool
+
+
+@dataclass(frozen=True)
+class FailureRecord:
+    failure_class: str
+    severity: str
+    artifact: str | None
+    message: str
+    operator_action: str
+
+
+@dataclass(frozen=True)
+class PhaseCompletionRecord:
+    phase: str
+    completed: bool
+    artifact: str
+
+
+@dataclass(frozen=True)
+class HealthStatusReport:
+    overall_status: str
+    healthy: bool
+    degraded: bool
+    failed: bool
+    degraded_mode: bool
+    input_freshness_status: str
+    artifact_presence_status: str
+    validation_status: str
+    phase_completion_status: str
+    internet_status: str
+    portfolio_output_status: str
+    alert_summary: dict[str, object]
+    checks: list[FreshnessCheck]
+    failures: list[FailureRecord]
+    phase_completion: list[PhaseCompletionRecord]
+
+
+@dataclass(frozen=True)
+class OperatingStatusSnapshot:
+    run_record: OperatingRunRecord
+    scheduler_status: SchedulerStatus
+    health_status: HealthStatusReport
+    top_operator_priorities: list[str]
+    latest_manifest_run_id: str
