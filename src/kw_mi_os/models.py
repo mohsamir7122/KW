@@ -382,3 +382,76 @@ class AlertRecord:
     severity: str
     message: str
     context: dict[str, object]
+
+
+@dataclass(frozen=True)
+class OperatingRunRecord:
+    run_id: str
+    mode: str
+    phase: str
+    scheduled_for_utc: str
+    started_at_utc: str
+    completed_at_utc: str
+    duration_seconds: float
+    outcome: str
+    trigger: str
+
+
+@dataclass(frozen=True)
+class SchedulerStatus:
+    scheduler_ready: bool
+    mode: str
+    deterministic_sample_mode: bool
+    next_scheduled_run_utc: str
+    last_run_id: str
+    last_run_outcome: str
+    queue_depth: int
+
+
+@dataclass(frozen=True)
+class FreshnessCheck:
+    artifact: str
+    observed_at_utc: str
+    max_age_seconds: int
+    observed_age_seconds: int
+    status: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class FailureRecord:
+    failure_code: str
+    category: str
+    severity: str
+    phase: str
+    message: str
+    retryable: bool
+
+
+@dataclass(frozen=True)
+class PhaseCompletionRecord:
+    phase: str
+    status: str
+    validated: bool
+    completed_at_utc: str
+
+
+@dataclass(frozen=True)
+class HealthStatusReport:
+    run_id: str
+    overall_status: str
+    scheduler: SchedulerStatus
+    freshness_checks: list[FreshnessCheck]
+    failures: list[FailureRecord]
+    phase_completion: list[PhaseCompletionRecord]
+    summary: str
+
+
+@dataclass(frozen=True)
+class OperatingStatusSnapshot:
+    run_id: str
+    generated_at_utc: str
+    operating_status: str
+    health_status: str
+    scheduler_status: str
+    degraded_reasons: list[str]

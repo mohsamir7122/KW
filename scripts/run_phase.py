@@ -30,6 +30,7 @@ from kw_mi_os.phase4 import (
     calibrate_signals,
 )
 from kw_mi_os.phase5 import apply_risk_controls, alerts_to_json, build_alerts, construct_portfolio_proposal, plan_rebalance
+from kw_mi_os.phase6 import build_health_status_report, to_json
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
@@ -53,6 +54,13 @@ from kw_mi_os.validation import (
     validate_risk_control_result,
     validate_source_growth_record,
     validate_signal_usefulness_report,
+    validate_operating_run_record,
+    validate_scheduler_status,
+    validate_freshness_checks,
+    validate_failure_records,
+    validate_phase_completion,
+    validate_health_status_report,
+    validate_operating_status_snapshot,
 )
 
 
@@ -77,7 +85,7 @@ def _load_prior_snapshot(path: Path) -> PortfolioSnapshot | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
@@ -166,7 +174,7 @@ def main() -> int:
     benchmark = None
     decision_quality = None
     calibrated_signals = []
-    if args.phase in {'all', 'phase3', 'phase4', 'phase5'}:
+    if args.phase in {'all', 'phase3', 'phase4', 'phase5', 'phase6'}:
         snapshot = build_historical_snapshot(
             snapshot_id=phase3_snapshot_id,
             as_of_date=date.fromisoformat('2026-04-10'),
@@ -236,7 +244,7 @@ def main() -> int:
             'source_growth_schema',
         ])
 
-    if args.phase in {'all', 'phase4', 'phase5'}:
+    if args.phase in {'all', 'phase4', 'phase5', 'phase6'}:
         calibration_metadata, calibrated_signals = calibrate_signals(phase3_snapshot_id, phase3_outcomes)
         validate_calibration_metadata(calibration_metadata)
         validate_calibrated_signals(calibrated_signals)
@@ -282,7 +290,7 @@ def main() -> int:
             'phase4_decision_quality_schema',
         ])
 
-    if args.phase in {'all', 'phase5'}:
+    if args.phase in {'all', 'phase5', 'phase6'}:
         if benchmark is None or decision_quality is None:
             raise ValueError('phase5 requires phase4 outputs')
 
@@ -364,6 +372,67 @@ def main() -> int:
             'phase5_rebalance_schema',
             'phase5_alert_schema',
             'phase5_snapshot_compatibility',
+        ])
+
+    if args.phase in {'all', 'phase6'}:
+        current_failures = []
+        if internet_status != 'ok':
+            current_failures.append('network_unavailable')
+
+        run_record, scheduler_status, health_report, operating_status, failure_records = build_health_status_report(
+            run_id='phase6_sample_run',
+            mode=mode,
+            run_outcome='success' if not current_failures else 'degraded',
+            failures=current_failures,
+        )
+        validate_operating_run_record(run_record)
+        validate_scheduler_status(scheduler_status)
+        validate_freshness_checks(health_report.freshness_checks)
+        validate_failure_records(failure_records)
+        validate_phase_completion(health_report.phase_completion)
+        validate_health_status_report(health_report)
+        validate_operating_status_snapshot(operating_status)
+
+        operating_latest_path = ROOT / 'runtime' / 'latest' / 'operating_status_latest.json'
+        health_latest_path = ROOT / 'runtime' / 'latest' / 'health_status_latest.json'
+        scheduler_latest_path = ROOT / 'runtime' / 'latest' / 'scheduler_status_latest.json'
+        operating_report_path = ROOT / 'runtime' / 'quality' / 'operating_status_report.json'
+        health_report_path = ROOT / 'runtime' / 'quality' / 'health_report.json'
+        failure_report_path = ROOT / 'runtime' / 'quality' / 'failure_report.json'
+        freshness_report_path = ROOT / 'runtime' / 'quality' / 'freshness_report.json'
+        run_history_path = ROOT / 'runtime' / 'learning' / 'operating_run_history.json'
+
+        operating_latest_path.write_text(json.dumps(to_json(operating_status), indent=2), encoding='utf-8')
+        health_latest_path.write_text(json.dumps(to_json(health_report), indent=2), encoding='utf-8')
+        scheduler_latest_path.write_text(json.dumps(to_json(scheduler_status), indent=2), encoding='utf-8')
+        operating_report_path.write_text(json.dumps({'run_record': to_json(run_record), 'operating_status': to_json(operating_status)}, indent=2), encoding='utf-8')
+        health_report_path.write_text(json.dumps(to_json(health_report), indent=2), encoding='utf-8')
+        failure_report_path.write_text(json.dumps([to_json(f) for f in failure_records], indent=2), encoding='utf-8')
+        freshness_report_path.write_text(json.dumps([to_json(f) for f in health_report.freshness_checks], indent=2), encoding='utf-8')
+
+        history: list[dict[str, object]] = []
+        if run_history_path.exists():
+            history = list(json.loads(run_history_path.read_text(encoding='utf-8')))
+        history.append(to_json(run_record))
+        run_history_path.write_text(json.dumps(history[-50:], indent=2), encoding='utf-8')
+
+        files_written.extend([
+            str(operating_latest_path),
+            str(health_latest_path),
+            str(scheduler_latest_path),
+            str(operating_report_path),
+            str(health_report_path),
+            str(failure_report_path),
+            str(freshness_report_path),
+            str(run_history_path),
+        ])
+        validations.extend([
+            'phase6_operating_run_record_schema',
+            'phase6_scheduler_status_schema',
+            'phase6_freshness_schema',
+            'phase6_failure_classification_schema',
+            'phase6_health_report_schema',
+            'phase6_operating_status_schema',
         ])
 
     checksums = {

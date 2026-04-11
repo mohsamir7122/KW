@@ -21,6 +21,13 @@ from .models import (
     HistoricalSnapshotRecord,
     LearningRecord,
     ListingStatus,
+    OperatingRunRecord,
+    OperatingStatusSnapshot,
+    FreshnessCheck,
+    FailureRecord,
+    PhaseCompletionRecord,
+    HealthStatusReport,
+    SchedulerStatus,
     QuarterlyRecord,
     RunManifestModel,
     SignalUsefulnessReport,
@@ -299,3 +306,60 @@ def validate_alert_records(alerts: list[AlertRecord]) -> list[AlertRecord]:
         if not alert.alert_type:
             raise ValueError('alert_type is required')
     return alerts
+
+
+def validate_operating_run_record(record: OperatingRunRecord) -> OperatingRunRecord:
+    if record.duration_seconds < 0:
+        raise ValueError('run duration cannot be negative')
+    if not record.run_id:
+        raise ValueError('run_id is required')
+    return record
+
+
+def validate_scheduler_status(status: SchedulerStatus) -> SchedulerStatus:
+    if status.queue_depth < 0:
+        raise ValueError('scheduler queue depth cannot be negative')
+    if not status.last_run_id:
+        raise ValueError('scheduler last_run_id is required')
+    return status
+
+
+def validate_freshness_checks(checks: list[FreshnessCheck]) -> list[FreshnessCheck]:
+    for check in checks:
+        if check.observed_age_seconds < 0:
+            raise ValueError(f'invalid observed_age_seconds for {check.artifact}')
+        if check.status not in {'fresh', 'stale'}:
+            raise ValueError(f'invalid freshness status for {check.artifact}')
+    return checks
+
+
+def validate_failure_records(records: list[FailureRecord]) -> list[FailureRecord]:
+    for failure in records:
+        if failure.severity not in {'warning', 'critical'}:
+            raise ValueError(f'invalid failure severity {failure.severity}')
+    return records
+
+
+def validate_phase_completion(records: list[PhaseCompletionRecord]) -> list[PhaseCompletionRecord]:
+    for record in records:
+        if record.status not in {'completed', 'skipped', 'failed'}:
+            raise ValueError(f'invalid phase status {record.status}')
+    return records
+
+
+def validate_health_status_report(report: HealthStatusReport) -> HealthStatusReport:
+    if report.overall_status not in {'healthy', 'degraded', 'failed'}:
+        raise ValueError('invalid overall health status')
+    validate_scheduler_status(report.scheduler)
+    validate_freshness_checks(report.freshness_checks)
+    validate_failure_records(report.failures)
+    validate_phase_completion(report.phase_completion)
+    return report
+
+
+def validate_operating_status_snapshot(snapshot: OperatingStatusSnapshot) -> OperatingStatusSnapshot:
+    if snapshot.operating_status not in {'healthy', 'degraded', 'failed'}:
+        raise ValueError('invalid operating status')
+    if snapshot.scheduler_status not in {'ready', 'not_ready'}:
+        raise ValueError('invalid scheduler status')
+    return snapshot
