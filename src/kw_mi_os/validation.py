@@ -5,8 +5,12 @@ from datetime import date, datetime
 from pathlib import Path
 
 from .models import (
+    BenchmarkResult,
+    CalibratedSignalRecord,
+    CalibrationMetadata,
     CandidateRecord,
     CandidateOutcomeRecord,
+    DecisionQualityReport,
     EvaluationReport,
     EntityType,
     HistoricalSnapshotRecord,
@@ -14,6 +18,7 @@ from .models import (
     ListingStatus,
     QuarterlyRecord,
     RunManifestModel,
+    SignalUsefulnessReport,
     SourceGrowthRecord,
     UniverseRecord,
 )
@@ -191,3 +196,38 @@ def validate_source_growth_record(record: SourceGrowthRecord) -> SourceGrowthRec
     if not record.source_coverage_over_time:
         raise ValueError('source coverage cannot be empty')
     return record
+
+
+def validate_calibration_metadata(metadata: CalibrationMetadata) -> CalibrationMetadata:
+    if metadata.sample_size < metadata.effective_sample_size:
+        raise ValueError('sample_size cannot be less than effective_sample_size')
+    if not (0.0 <= metadata.calibration_factor <= 2.0):
+        raise ValueError('calibration_factor out of bounds')
+    return metadata
+
+
+def validate_calibrated_signals(records: list[CalibratedSignalRecord]) -> list[CalibratedSignalRecord]:
+    for r in records:
+        if not (0.0 <= r.raw_signal <= 1.0):
+            raise ValueError(f'raw_signal out of bounds for {r.symbol}')
+        if not (0.0 <= r.calibrated_signal <= 1.0):
+            raise ValueError(f'calibrated_signal out of bounds for {r.symbol}')
+    return records
+
+
+def validate_benchmark_result(result: BenchmarkResult) -> BenchmarkResult:
+    if result.candidate_hit_rate is not None and not (0.0 <= result.candidate_hit_rate <= 1.0):
+        raise ValueError('candidate_hit_rate out of bounds')
+    return result
+
+
+def validate_signal_usefulness_report(report: SignalUsefulnessReport) -> SignalUsefulnessReport:
+    if not (0.0 <= report.usefulness_score <= 1.0):
+        raise ValueError('signal usefulness score out of bounds')
+    return report
+
+
+def validate_decision_quality_report(report: DecisionQualityReport) -> DecisionQualityReport:
+    if not (0.0 <= report.decision_quality_score <= 1.0):
+        raise ValueError('decision quality score out of bounds')
+    return report
