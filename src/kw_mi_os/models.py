@@ -242,3 +242,61 @@ class SourceGrowthRecord:
     source_participation_in_candidates: dict[str, int]
     source_acceptance_rejection_counts: dict[str, dict[str, int]]
     source_contribution_eligibility_summary: dict[str, float]
+
+
+@dataclass(frozen=True)
+class CalibrationMetadata:
+    method: str
+    sample_size: int
+    effective_sample_size: int
+    sparse_data_limited: bool
+    calibration_factor: float
+    confidence_band: dict[str, float]
+    limitations: list[str]
+
+
+@dataclass(frozen=True)
+class CalibratedSignalRecord:
+    symbol: str
+    snapshot_id: str
+    raw_signal: float
+    calibrated_signal: float
+    observed_return: float | None
+    evaluable: bool
+    outcome_status: str
+
+
+@dataclass(frozen=True)
+class BenchmarkResult:
+    snapshot_id: str
+    candidate_return_mean: float
+    baseline_return_mean: float
+    excess_return: float
+    candidate_hit_rate: float | None
+    baseline_hit_rate: float | None
+    confidence_band: dict[str, float]
+    summary: str
+    limitations: list[str]
+
+
+@dataclass(frozen=True)
+class SignalUsefulnessReport:
+    snapshot_id: str
+    sample_size: int
+    usefulness_score: float
+    directional_accuracy_raw: float | None
+    directional_accuracy_calibrated: float | None
+    calibration_lift: float
+    per_signal_summary: dict[str, dict[str, float]]
+    limitations: list[str]
+
+
+@dataclass(frozen=True)
+class DecisionQualityReport:
+    snapshot_id: str
+    decision_quality_score: float
+    confidence_band: dict[str, float]
+    benchmark_comparison: dict[str, float]
+    signal_usefulness: dict[str, float]
+    summary: str
+    limitations: list[str]

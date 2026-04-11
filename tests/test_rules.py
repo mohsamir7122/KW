@@ -18,6 +18,12 @@ from kw_mi_os.historical_snapshot import build_historical_snapshot
 from kw_mi_os.ingestion import FetchResult, SourceCatalogEntry, fetch_json
 from kw_mi_os.learning import build_learning_records
 from kw_mi_os.models import CandidateRecord, SignalInput, SourceClass, SourceEvidenceRecord
+from kw_mi_os.phase4 import (
+    build_benchmark_result,
+    build_decision_quality_report,
+    build_signal_usefulness_report,
+    calibrate_signals,
+)
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.ranking import rank_candidates
 from kw_mi_os.signal_engine import compute_signals
@@ -25,12 +31,17 @@ from kw_mi_os.source_growth import build_source_growth_record
 from kw_mi_os.universe import load_tradable_universe
 from kw_mi_os.validation import (
     validate_candidate_outcomes,
+    validate_benchmark_result,
+    validate_calibrated_signals,
+    validate_calibration_metadata,
+    validate_decision_quality_report,
     validate_evaluation_report,
     validate_historical_snapshot,
     validate_learning_records,
     validate_manifest,
     validate_quarterly,
     validate_source_growth_record,
+    validate_signal_usefulness_report,
     validate_universe,
 )
 
@@ -81,9 +92,10 @@ def test_ranking_no_double_counting_of_trust():
 
 
 def test_phase_contracts_defined_and_idempotent():
-    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3'}
+    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4'}
     assert all(v.idempotent for v in PHASE_CONTRACTS.values())
     assert PHASE_CONTRACTS['phase3'].outputs
+    assert PHASE_CONTRACTS['phase4'].outputs
 
 
 def test_historical_snapshot_validation_and_point_in_time_behavior():
@@ -183,7 +195,13 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
         ROOT / 'runtime/learning/learning_records.json',
         ROOT / 'runtime/source_growth/source_growth_report.json',
         ROOT / 'runtime/quality/evaluation_quality_report.json',
+        ROOT / 'runtime/learning/calibrated_signals.json',
+        ROOT / 'runtime/learning/signal_usefulness_report.json',
+        ROOT / 'runtime/quality/benchmark_report.json',
+        ROOT / 'runtime/quality/decision_quality_report.json',
         ROOT / 'runtime/latest/evaluation_latest.json',
+        ROOT / 'runtime/latest/benchmark_latest.json',
+        ROOT / 'runtime/latest/decision_quality_latest.json',
         ROOT / 'runtime/latest/run_manifest.json',
     ]
     for p in required:
@@ -192,6 +210,33 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
     manifest = json.loads((ROOT / 'runtime/latest/run_manifest.json').read_text(encoding='utf-8'))
     validate_manifest(manifest)
     assert 'historical_snapshot_schema' in manifest['validations']
+    assert 'phase4_decision_quality_schema' in manifest['validations']
+
+
+def test_phase4_outputs_validate_from_sample_outcomes():
+    _, quarterly, evidence, _ = _sample_pipeline_inputs()
+    snapshot = build_historical_snapshot(
+        snapshot_id='snap_5',
+        as_of_date=date.fromisoformat('2026-04-10'),
+        quarterly_records=quarterly,
+        evidence_records=evidence,
+    )
+    outcomes = track_candidate_outcomes(
+        candidates=[CandidateRecord(symbol='NBK', base_signal=0.4, trust_score=0.9, final_score=0.36, reason='x')],
+        snapshot=snapshot,
+        observed_outcomes_by_symbol={'NBK': 0.03},
+        explanations_by_symbol={'NBK': {'missing_data_penalties': 0.01}},
+    )
+    metadata, calibrated = calibrate_signals(snapshot.snapshot_id, outcomes)
+    validate_calibration_metadata(metadata)
+    validate_calibrated_signals(calibrated)
+    benchmark = build_benchmark_result(snapshot.snapshot_id, outcomes)
+    validate_benchmark_result(benchmark)
+    usefulness = build_signal_usefulness_report(snapshot.snapshot_id, calibrated)
+    validate_signal_usefulness_report(usefulness)
+    decision_quality = build_decision_quality_report(snapshot.snapshot_id, benchmark, usefulness, metadata)
+    validate_decision_quality_report(decision_quality)
+    assert 0 <= decision_quality.decision_quality_score <= 1
 
 
 def test_runtime_git_tracking_policy_only_gitkeep():
