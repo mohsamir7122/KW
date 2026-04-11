@@ -523,3 +523,79 @@ class ConsolidatedLatestReport:
     operator_checklist: dict[str, object]
     reporting_metadata: dict[str, object]
     operator_ready: bool
+
+
+@dataclass(frozen=True)
+class OperatorVerdict:
+    run_id: str
+    verdict_status: str
+    signoff_recommendation: str
+    top_risks: list[str]
+    top_positive_signals: list[str]
+    required_manual_checks: list[str]
+    escalation_needed: bool
+    rationale: str
+
+
+@dataclass(frozen=True)
+class SignoffRecommendation:
+    run_id: str
+    recommendation: str
+    verdict_status: str
+    approved_for_next_cycle: bool
+    required_manual_checks: list[str]
+    priority_inspection_order: list[str]
+    notes: list[str]
+
+
+@dataclass(frozen=True)
+class DailyRolloutReport:
+    run_id: str
+    run_date: str
+    run_mode: str
+    run_completion_status: str
+    health_state: str
+    degraded_or_failed: bool
+    top_issues: list[str]
+    portfolio_rebalance_present: bool
+    decision_quality_present: bool
+    alert_summary: dict[str, int]
+    operator_verdict: str
+    signoff_recommendation: str
+    verdict_rationale: str
+    inspect_first: list[str]
+
+
+@dataclass(frozen=True)
+class RolloutDayRecord:
+    run_date: str
+    run_mode: str
+    run_completion_status: str
+    health_state: str
+    degraded_or_failed: bool
+    top_issues: list[str]
+    operator_verdict: str
+    signoff_recommendation: str
+    portfolio_rebalance_present: bool
+    decision_quality_present: bool
+    alert_summary: dict[str, int]
+    run_id: str
+
+
+@dataclass(frozen=True)
+class RolloutHistory:
+    window_days: int
+    records: list[RolloutDayRecord]
+    latest_run_id: str
+    latest_run_date: str
+
+
+@dataclass(frozen=True)
+class RolloutMetadata:
+    phase: str
+    mode: str
+    deterministic_sample_mode: bool
+    upstream_inputs: list[str]
+    generated_outputs: list[str]
+    history_window_days: int
+    persistence_limitation_note: str
