@@ -14,8 +14,11 @@ from .models import (
     DecisionQualityReport,
     DashboardSnapshot,
     DailyReviewSummary,
+    DailyExportBundle,
     EvaluationReport,
+    ExportMetadata,
     EntityType,
+    MarkdownSummary,
     PortfolioProposal,
     PortfolioSnapshot,
     RebalanceAction,
@@ -41,6 +44,7 @@ from .models import (
     QuarterlyRecord,
     RunManifestModel,
     SignalUsefulnessReport,
+    CsvExportSpec,
     SourceGrowthRecord,
     UniverseRecord,
 )
@@ -526,4 +530,52 @@ def validate_phase8_required_inputs(required_paths: list[Path]) -> list[Path]:
     if missing:
         missing_text = ', '.join(str(path) for path in missing)
         raise ValueError(f'phase8 missing upstream artifacts: {missing_text}')
+    return required_paths
+
+
+def validate_csv_export_spec(spec: CsvExportSpec) -> CsvExportSpec:
+    if not spec.artifact_name.endswith('.csv'):
+        raise ValueError('csv export artifact_name must end with .csv')
+    if not spec.columns:
+        raise ValueError('csv export must contain columns')
+    if spec.row_count < 0:
+        raise ValueError('csv export row_count cannot be negative')
+    return spec
+
+
+def validate_markdown_summary(summary: MarkdownSummary) -> MarkdownSummary:
+    if not summary.artifact_path.endswith('.md'):
+        raise ValueError('markdown summary artifact_path must end with .md')
+    if not summary.title.strip():
+        raise ValueError('markdown summary title is required')
+    if summary.line_count <= 0:
+        raise ValueError('markdown summary line_count must be positive')
+    return summary
+
+
+def validate_export_metadata(metadata: ExportMetadata) -> ExportMetadata:
+    if metadata.phase != 'phase9':
+        raise ValueError('export metadata phase must be phase9')
+    if not metadata.source_artifacts or not metadata.published_artifacts:
+        raise ValueError('export metadata requires source and published artifacts')
+    if not metadata.scheduler_friendly:
+        raise ValueError('phase9 exports must be scheduler friendly')
+    return metadata
+
+
+def validate_daily_export_bundle(bundle: DailyExportBundle) -> DailyExportBundle:
+    if not bundle.canonical_json_path.endswith('.json'):
+        raise ValueError('daily export canonical_json_path must end with .json')
+    for spec in bundle.csv_exports:
+        validate_csv_export_spec(spec)
+    validate_markdown_summary(bundle.markdown_summary)
+    validate_export_metadata(bundle.metadata)
+    return bundle
+
+
+def validate_phase9_required_inputs(required_paths: list[Path]) -> list[Path]:
+    missing = [path for path in required_paths if not path.exists()]
+    if missing:
+        missing_text = ', '.join(str(path) for path in missing)
+        raise ValueError(f'phase9 missing upstream artifacts: {missing_text}')
     return required_paths

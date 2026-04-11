@@ -599,3 +599,42 @@ class RolloutMetadata:
     generated_outputs: list[str]
     history_window_days: int
     persistence_limitation_note: str
+
+
+@dataclass(frozen=True)
+class CsvExportSpec:
+    artifact_name: str
+    artifact_path: str
+    columns: list[str]
+    row_count: int
+
+
+@dataclass(frozen=True)
+class MarkdownSummary:
+    artifact_path: str
+    title: str
+    sections: list[str]
+    line_count: int
+
+
+@dataclass(frozen=True)
+class ExportMetadata:
+    phase: str
+    run_id: str
+    mode: str
+    generated_at_utc: str
+    source_artifacts: list[str]
+    published_artifacts: list[str]
+    scheduler_friendly: bool
+    notes: list[str]
+
+
+@dataclass(frozen=True)
+class DailyExportBundle:
+    run_id: str
+    mode: str
+    generated_at_utc: str
+    canonical_json_path: str
+    csv_exports: list[CsvExportSpec]
+    markdown_summary: MarkdownSummary
+    metadata: ExportMetadata

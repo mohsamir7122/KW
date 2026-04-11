@@ -61,6 +61,7 @@ from kw_mi_os.phase8 import (
     build_rollout_metadata,
     build_signoff_recommendation,
 )
+from kw_mi_os.phase9 import build_daily_export_bundle
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
@@ -104,6 +105,11 @@ from kw_mi_os.validation import (
     validate_rollout_history,
     validate_rollout_metadata,
     validate_signoff_recommendation,
+    validate_csv_export_spec,
+    validate_daily_export_bundle,
+    validate_export_metadata,
+    validate_markdown_summary,
+    validate_phase9_required_inputs,
 )
 
 
@@ -128,7 +134,7 @@ def _load_prior_snapshot(path: Path) -> PortfolioSnapshot | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
@@ -218,7 +224,7 @@ def main() -> int:
     benchmark = None
     decision_quality = None
     calibrated_signals = []
-    if args.phase in {'all', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}:
+    if args.phase in {'all', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'}:
         snapshot = build_historical_snapshot(
             snapshot_id=phase3_snapshot_id,
             as_of_date=date.fromisoformat('2026-04-10'),
@@ -288,7 +294,7 @@ def main() -> int:
             'source_growth_schema',
         ])
 
-    if args.phase in {'all', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}:
+    if args.phase in {'all', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'}:
         calibration_metadata, calibrated_signals = calibrate_signals(phase3_snapshot_id, phase3_outcomes)
         validate_calibration_metadata(calibration_metadata)
         validate_calibrated_signals(calibrated_signals)
@@ -334,7 +340,7 @@ def main() -> int:
             'phase4_decision_quality_schema',
         ])
 
-    if args.phase in {'all', 'phase5', 'phase6', 'phase7', 'phase8'}:
+    if args.phase in {'all', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'}:
         if benchmark is None or decision_quality is None:
             raise ValueError('phase5 requires phase4 outputs')
 
@@ -418,7 +424,7 @@ def main() -> int:
             'phase5_snapshot_compatibility',
         ])
 
-    if args.phase in {'all', 'phase6', 'phase7', 'phase8'}:
+    if args.phase in {'all', 'phase6', 'phase7', 'phase8', 'phase9'}:
         current_failures = []
         if internet_status != 'ok':
             current_failures.append('network_unavailable')
@@ -479,7 +485,7 @@ def main() -> int:
             'phase6_operating_status_schema',
         ])
 
-    if args.phase in {'all', 'phase7', 'phase8'}:
+    if args.phase in {'all', 'phase7', 'phase8', 'phase9'}:
         phase7_inputs = [
             ROOT / 'runtime' / 'latest' / 'operating_status_latest.json',
             ROOT / 'runtime' / 'latest' / 'health_status_latest.json',
@@ -608,7 +614,7 @@ def main() -> int:
             'phase7_consolidated_report_schema',
         ])
 
-    if args.phase in {'all', 'phase8'}:
+    if args.phase in {'all', 'phase8', 'phase9'}:
         phase8_inputs = [
             ROOT / 'runtime' / 'latest' / 'operating_status_latest.json',
             ROOT / 'runtime' / 'latest' / 'health_status_latest.json',
@@ -727,6 +733,57 @@ def main() -> int:
             'phase8_daily_rollout_schema',
             'phase8_rollout_history_schema',
             'phase8_rollout_metadata_schema',
+        ])
+
+    if args.phase in {'all', 'phase9'}:
+        phase9_inputs = [
+            ROOT / 'runtime' / 'latest' / 'candidates_latest.json',
+            ROOT / 'runtime' / 'latest' / 'portfolio_latest.json',
+            ROOT / 'runtime' / 'latest' / 'rebalance_latest.json',
+            ROOT / 'runtime' / 'latest' / 'alerts_latest.json',
+            ROOT / 'runtime' / 'latest' / 'operating_status_latest.json',
+        ]
+        validate_phase9_required_inputs(phase9_inputs)
+        reports_dir = ROOT / 'reports'
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        candidates_latest = json.loads((ROOT / 'runtime' / 'latest' / 'candidates_latest.json').read_text(encoding='utf-8'))
+        portfolio_latest = json.loads((ROOT / 'runtime' / 'latest' / 'portfolio_latest.json').read_text(encoding='utf-8'))
+        rebalance_latest = json.loads((ROOT / 'runtime' / 'latest' / 'rebalance_latest.json').read_text(encoding='utf-8'))
+        alerts_latest = json.loads((ROOT / 'runtime' / 'latest' / 'alerts_latest.json').read_text(encoding='utf-8'))
+        operating_latest = json.loads((ROOT / 'runtime' / 'latest' / 'operating_status_latest.json').read_text(encoding='utf-8'))
+        bundle = build_daily_export_bundle(
+            run_id=f'phase9_{mode}_run',
+            mode=mode,
+            candidates=list(candidates_latest),
+            portfolio_snapshot=dict(portfolio_latest),
+            rebalance_actions=list(rebalance_latest),
+            alerts=list(alerts_latest),
+            operating_status=dict(operating_latest),
+            reports_dir=reports_dir,
+        )
+        validate_daily_export_bundle(bundle)
+        for spec in bundle.csv_exports:
+            validate_csv_export_spec(spec)
+        validate_markdown_summary(bundle.markdown_summary)
+        validate_export_metadata(bundle.metadata)
+
+        files_written.extend([
+            str(reports_dir / 'daily_export_latest.json'),
+            str(reports_dir / 'daily_summary.md'),
+            str(reports_dir / 'candidates_latest.csv'),
+            str(reports_dir / 'portfolio_latest.csv'),
+            str(reports_dir / 'rebalance_latest.csv'),
+            str(reports_dir / 'alerts_latest.csv'),
+            str(reports_dir / 'operating_status_latest.csv'),
+            str(reports_dir / 'export_metadata.json'),
+        ])
+        validations.extend([
+            'phase9_required_inputs_present',
+            'phase9_daily_export_bundle_schema',
+            'phase9_csv_export_spec_schema',
+            'phase9_markdown_summary_schema',
+            'phase9_export_metadata_schema',
         ])
 
     checksums = {

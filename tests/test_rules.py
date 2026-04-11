@@ -41,6 +41,7 @@ from kw_mi_os.models import (
     SourceEvidenceRecord,
 )
 from kw_mi_os.phase8 import append_rollout_history, build_daily_rollout_report, build_operator_verdict, build_rollout_metadata, build_signoff_recommendation
+from kw_mi_os.phase9 import build_daily_export_bundle
 from kw_mi_os.phase4 import (
     build_benchmark_result,
     build_decision_quality_report,
@@ -97,7 +98,12 @@ from kw_mi_os.validation import (
     validate_signal_usefulness_report,
     validate_signoff_recommendation,
     validate_daily_rollout_report,
+    validate_csv_export_spec,
+    validate_daily_export_bundle,
+    validate_export_metadata,
     validate_health_status_report,
+    validate_markdown_summary,
+    validate_phase9_required_inputs,
     validate_universe,
 )
 
@@ -148,7 +154,7 @@ def test_ranking_no_double_counting_of_trust():
 
 
 def test_phase_contracts_defined_and_idempotent():
-    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}
+    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'}
     assert all(v.idempotent for v in PHASE_CONTRACTS.values())
     assert PHASE_CONTRACTS['phase3'].outputs
     assert PHASE_CONTRACTS['phase4'].outputs
@@ -156,6 +162,7 @@ def test_phase_contracts_defined_and_idempotent():
     assert PHASE_CONTRACTS['phase6'].outputs
     assert PHASE_CONTRACTS['phase7'].outputs
     assert PHASE_CONTRACTS['phase8'].outputs
+    assert PHASE_CONTRACTS['phase9'].outputs
 
 
 def test_historical_snapshot_validation_and_point_in_time_behavior():
@@ -290,6 +297,14 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
         ROOT / 'runtime/quality/rollout_metadata.json',
         ROOT / 'runtime/learning/operating_run_history.json',
         ROOT / 'runtime/learning/rollout_30_day_history.json',
+        ROOT / 'reports/daily_export_latest.json',
+        ROOT / 'reports/daily_summary.md',
+        ROOT / 'reports/candidates_latest.csv',
+        ROOT / 'reports/portfolio_latest.csv',
+        ROOT / 'reports/rebalance_latest.csv',
+        ROOT / 'reports/alerts_latest.csv',
+        ROOT / 'reports/operating_status_latest.csv',
+        ROOT / 'reports/export_metadata.json',
         ROOT / 'runtime/latest/run_manifest.json',
     ]
     for p in required:
@@ -303,6 +318,7 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
     assert 'phase6_operating_status_schema' in manifest['validations']
     assert 'phase7_consolidated_report_schema' in manifest['validations']
     assert 'phase8_daily_rollout_schema' in manifest['validations']
+    assert 'phase9_daily_export_bundle_schema' in manifest['validations']
 
 
 def test_phase4_outputs_validate_from_sample_outcomes():
@@ -648,3 +664,33 @@ def test_phase8_workflow_schedule_present_and_dispatch_inputs():
     assert 'workflow_dispatch:' in text
     assert 'mode:' in text
     assert 'phase8' in text
+    assert 'phase9' in text
+
+
+def test_phase9_exports_bundle_and_validations():
+    subprocess.check_call(['python', 'scripts/run_phase.py', '--sample-mode'])
+    subprocess.check_call(['python', 'scripts/run_phase.py', '--sample-mode', '--phase', 'phase9'])
+    required_inputs = [
+        ROOT / 'runtime/latest/candidates_latest.json',
+        ROOT / 'runtime/latest/portfolio_latest.json',
+        ROOT / 'runtime/latest/rebalance_latest.json',
+        ROOT / 'runtime/latest/alerts_latest.json',
+        ROOT / 'runtime/latest/operating_status_latest.json',
+    ]
+    validate_phase9_required_inputs(required_inputs)
+
+    bundle = build_daily_export_bundle(
+        run_id='phase9_test_run',
+        mode='sample',
+        candidates=json.loads((ROOT / 'runtime/latest/candidates_latest.json').read_text(encoding='utf-8')),
+        portfolio_snapshot=json.loads((ROOT / 'runtime/latest/portfolio_latest.json').read_text(encoding='utf-8')),
+        rebalance_actions=json.loads((ROOT / 'runtime/latest/rebalance_latest.json').read_text(encoding='utf-8')),
+        alerts=json.loads((ROOT / 'runtime/latest/alerts_latest.json').read_text(encoding='utf-8')),
+        operating_status=json.loads((ROOT / 'runtime/latest/operating_status_latest.json').read_text(encoding='utf-8')),
+        reports_dir=ROOT / 'reports',
+    )
+    validate_daily_export_bundle(bundle)
+    for spec in bundle.csv_exports:
+        validate_csv_export_spec(spec)
+    validate_markdown_summary(bundle.markdown_summary)
+    validate_export_metadata(bundle.metadata)
