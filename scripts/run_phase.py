@@ -22,6 +22,13 @@ from kw_mi_os.historical_snapshot import build_historical_snapshot
 from kw_mi_os.ingestion import default_source_catalog, fetch_json
 from kw_mi_os.learning import build_learning_records, learning_records_to_json
 from kw_mi_os.models import ExclusionRecord, SignalInput, SourceClass, SourceEvidenceRecord
+from kw_mi_os.phase4 import (
+    build_benchmark_result,
+    build_decision_quality_report,
+    build_signal_usefulness_report,
+    calibrated_records_to_json,
+    calibrate_signals,
+)
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
@@ -29,12 +36,17 @@ from kw_mi_os.source_growth import build_source_growth_record, source_growth_to_
 from kw_mi_os.universe import load_tradable_universe
 from kw_mi_os.validation import (
     validate_candidate_outcomes,
+    validate_benchmark_result,
+    validate_calibrated_signals,
+    validate_calibration_metadata,
+    validate_decision_quality_report,
     validate_evaluation_report,
     validate_historical_snapshot,
     validate_learning_records,
     validate_manifest,
     validate_quarterly,
     validate_source_growth_record,
+    validate_signal_usefulness_report,
 )
 
 
@@ -47,7 +59,7 @@ def _deterministic_observed_outcomes(mode: str) -> dict[str, float]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
@@ -131,9 +143,11 @@ def main() -> int:
         'evidence_normalization',
     ]
 
-    if args.phase in {'all', 'phase3'}:
+    phase3_outcomes = []
+    phase3_snapshot_id = 'kw_phase3_sample_2026q1'
+    if args.phase in {'all', 'phase3', 'phase4'}:
         snapshot = build_historical_snapshot(
-            snapshot_id='kw_phase3_sample_2026q1',
+            snapshot_id=phase3_snapshot_id,
             as_of_date=date.fromisoformat('2026-04-10'),
             quarterly_records=quarterly_records,
             evidence_records=evidence,
@@ -147,7 +161,7 @@ def main() -> int:
             observed_outcomes_by_symbol=_deterministic_observed_outcomes(mode),
             explanations_by_symbol=explanations_by_symbol,
         )
-        validate_candidate_outcomes(outcomes)
+        phase3_outcomes = validate_candidate_outcomes(outcomes)
 
         evaluation_report = generate_evaluation_report(
             snapshot=snapshot,
@@ -199,6 +213,52 @@ def main() -> int:
             'evaluation_report_schema',
             'learning_schema',
             'source_growth_schema',
+        ])
+
+    if args.phase in {'all', 'phase4'}:
+        calibration_metadata, calibrated_signals = calibrate_signals(phase3_snapshot_id, phase3_outcomes)
+        validate_calibration_metadata(calibration_metadata)
+        validate_calibrated_signals(calibrated_signals)
+
+        benchmark = build_benchmark_result(phase3_snapshot_id, phase3_outcomes)
+        validate_benchmark_result(benchmark)
+
+        usefulness = build_signal_usefulness_report(phase3_snapshot_id, calibrated_signals)
+        validate_signal_usefulness_report(usefulness)
+
+        decision_quality = build_decision_quality_report(phase3_snapshot_id, benchmark, usefulness, calibration_metadata)
+        validate_decision_quality_report(decision_quality)
+
+        calibrated_signals_path = ROOT / 'runtime' / 'learning' / 'calibrated_signals.json'
+        signal_usefulness_path = ROOT / 'runtime' / 'learning' / 'signal_usefulness_report.json'
+        benchmark_path = ROOT / 'runtime' / 'quality' / 'benchmark_report.json'
+        decision_quality_path = ROOT / 'runtime' / 'quality' / 'decision_quality_report.json'
+        benchmark_latest_path = ROOT / 'runtime' / 'latest' / 'benchmark_latest.json'
+        decision_quality_latest_path = ROOT / 'runtime' / 'latest' / 'decision_quality_latest.json'
+
+        calibrated_signals_path.write_text(
+            json.dumps(calibrated_records_to_json(calibration_metadata, calibrated_signals), indent=2),
+            encoding='utf-8',
+        )
+        signal_usefulness_path.write_text(json.dumps(asdict(usefulness), indent=2), encoding='utf-8')
+        benchmark_path.write_text(json.dumps(asdict(benchmark), indent=2), encoding='utf-8')
+        decision_quality_path.write_text(json.dumps(asdict(decision_quality), indent=2), encoding='utf-8')
+        benchmark_latest_path.write_text(benchmark_path.read_text(encoding='utf-8'), encoding='utf-8')
+        decision_quality_latest_path.write_text(decision_quality_path.read_text(encoding='utf-8'), encoding='utf-8')
+
+        files_written.extend([
+            str(calibrated_signals_path),
+            str(signal_usefulness_path),
+            str(benchmark_path),
+            str(decision_quality_path),
+            str(benchmark_latest_path),
+            str(decision_quality_latest_path),
+        ])
+        validations.extend([
+            'phase4_calibration_schema',
+            'phase4_benchmark_schema',
+            'phase4_signal_usefulness_schema',
+            'phase4_decision_quality_schema',
         ])
 
     checksums = {
