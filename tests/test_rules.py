@@ -26,6 +26,7 @@ from kw_mi_os.models import (
     FreshnessCheck,
     HealthStatusReport,
     OperatingStatusSnapshot,
+    OperatorVerdict,
     PhaseCompletionRecord,
     PortfolioProposal,
     PortfolioQualityReport,
@@ -34,10 +35,12 @@ from kw_mi_os.models import (
     RiskControlCheck,
     RiskControlResult,
     SchedulerStatus,
+    SignoffRecommendation,
     SignalInput,
     SourceClass,
     SourceEvidenceRecord,
 )
+from kw_mi_os.phase8 import append_rollout_history, build_daily_rollout_report, build_operator_verdict, build_rollout_metadata, build_signoff_recommendation
 from kw_mi_os.phase4 import (
     build_benchmark_result,
     build_decision_quality_report,
@@ -76,18 +79,24 @@ from kw_mi_os.validation import (
     validate_manifest,
     validate_operating_run_record,
     validate_operating_status_snapshot,
+    validate_operator_verdict,
     validate_phase7_required_inputs,
+    validate_phase8_required_inputs,
     validate_phase_completion,
     validate_portfolio_proposal,
     validate_portfolio_snapshot_compatibility,
     validate_quarterly,
     validate_rebalance_actions,
     validate_reporting_metadata,
+    validate_rollout_history,
+    validate_rollout_metadata,
     validate_review_checklist,
     validate_risk_control_result,
     validate_scheduler_status,
     validate_source_growth_record,
     validate_signal_usefulness_report,
+    validate_signoff_recommendation,
+    validate_daily_rollout_report,
     validate_health_status_report,
     validate_universe,
 )
@@ -139,13 +148,14 @@ def test_ranking_no_double_counting_of_trust():
 
 
 def test_phase_contracts_defined_and_idempotent():
-    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7'}
+    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}
     assert all(v.idempotent for v in PHASE_CONTRACTS.values())
     assert PHASE_CONTRACTS['phase3'].outputs
     assert PHASE_CONTRACTS['phase4'].outputs
     assert PHASE_CONTRACTS['phase5'].outputs
     assert PHASE_CONTRACTS['phase6'].outputs
     assert PHASE_CONTRACTS['phase7'].outputs
+    assert PHASE_CONTRACTS['phase8'].outputs
 
 
 def test_historical_snapshot_validation_and_point_in_time_behavior():
@@ -265,6 +275,9 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
         ROOT / 'runtime/latest/dashboard_snapshot.json',
         ROOT / 'runtime/latest/daily_review_latest.json',
         ROOT / 'runtime/latest/consolidated_latest_report.json',
+        ROOT / 'runtime/latest/daily_rollout_latest.json',
+        ROOT / 'runtime/latest/operator_verdict_latest.json',
+        ROOT / 'runtime/latest/signoff_recommendation_latest.json',
         ROOT / 'runtime/quality/operating_status_report.json',
         ROOT / 'runtime/quality/health_report.json',
         ROOT / 'runtime/quality/failure_report.json',
@@ -272,7 +285,11 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
         ROOT / 'runtime/quality/operator_summary_report.json',
         ROOT / 'runtime/quality/review_checklist_report.json',
         ROOT / 'runtime/quality/reporting_metadata.json',
+        ROOT / 'runtime/quality/daily_rollout_report.json',
+        ROOT / 'runtime/quality/operator_verdict_report.json',
+        ROOT / 'runtime/quality/rollout_metadata.json',
         ROOT / 'runtime/learning/operating_run_history.json',
+        ROOT / 'runtime/learning/rollout_30_day_history.json',
         ROOT / 'runtime/latest/run_manifest.json',
     ]
     for p in required:
@@ -285,6 +302,7 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
     assert 'phase5_alert_schema' in manifest['validations']
     assert 'phase6_operating_status_schema' in manifest['validations']
     assert 'phase7_consolidated_report_schema' in manifest['validations']
+    assert 'phase8_daily_rollout_schema' in manifest['validations']
 
 
 def test_phase4_outputs_validate_from_sample_outcomes():
@@ -559,3 +577,74 @@ def test_phase7_checklist_ordering_and_missing_input_detection():
     bad_missing = [ROOT / 'runtime/latest/this_input_does_not_exist.json']
     with pytest.raises(ValueError):
         validate_phase7_required_inputs(bad_missing)
+
+
+def test_phase8_rollout_models_validation_and_history_append():
+    verdict = build_operator_verdict(
+        run_id='phase8_test_run',
+        health_state='healthy',
+        decision_quality_score=0.6,
+        benchmark_excess_return=0.02,
+        alert_summary={'total_alerts': 1, 'critical_alert_count': 0, 'warning_alert_count': 1},
+        degraded_reasons=[],
+        daily_inspect_first=['check-a'],
+    )
+    validate_operator_verdict(verdict)
+    signoff = build_signoff_recommendation(verdict=verdict)
+    validate_signoff_recommendation(signoff)
+    report = build_daily_rollout_report(
+        run_id='phase8_test_run',
+        run_date='2026-04-10',
+        run_mode='sample',
+        run_completion_status='completed',
+        health_state='healthy',
+        alert_summary={'total_alerts': 1, 'critical_alert_count': 0, 'warning_alert_count': 1},
+        top_issues=['warning_alerts_present'],
+        portfolio_rebalance_present=True,
+        decision_quality_present=True,
+        verdict=verdict,
+    )
+    validate_daily_rollout_report(report)
+
+    history = append_rollout_history(existing=[], report=report, window_days=30)
+    validate_rollout_history(history)
+    assert len(history.records) == 1
+    assert history.records[0].operator_verdict == 'caution'
+
+    updated = append_rollout_history(existing=[history.records[0].__dict__], report=report, window_days=30)
+    validate_rollout_history(updated)
+    assert len(updated.records) == 1
+    metadata = build_rollout_metadata(
+        mode='sample',
+        upstream_inputs=['runtime/latest/health_status_latest.json'],
+        generated_outputs=['runtime/latest/daily_rollout_latest.json'],
+        deterministic=True,
+    )
+    validate_rollout_metadata(metadata)
+
+
+def test_phase8_reject_contradiction_and_missing_inputs_detection():
+    with pytest.raises(ValueError):
+        validate_signoff_recommendation(
+            SignoffRecommendation(
+                run_id='x',
+                recommendation='approve_today_output',
+                verdict_status='reject',
+                approved_for_next_cycle=False,
+                required_manual_checks=['a'],
+                priority_inspection_order=['a'],
+                notes=[],
+            )
+        )
+    with pytest.raises(ValueError):
+        validate_phase8_required_inputs([ROOT / 'runtime/latest/not_present_phase8.json'])
+
+
+def test_phase8_workflow_schedule_present_and_dispatch_inputs():
+    workflow_path = ROOT / '.github/workflows/market-intelligence-os.yml'
+    text = workflow_path.read_text(encoding='utf-8')
+    assert 'schedule:' in text
+    assert 'cron:' in text
+    assert 'workflow_dispatch:' in text
+    assert 'mode:' in text
+    assert 'phase8' in text

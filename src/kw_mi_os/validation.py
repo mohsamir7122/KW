@@ -26,8 +26,13 @@ from .models import (
     OperatingRunRecord,
     OperatingStatusSnapshot,
     ConsolidatedLatestReport,
+    DailyRolloutReport,
+    OperatorVerdict,
     ReportingMetadata,
+    RolloutHistory,
+    RolloutMetadata,
     ReviewChecklist,
+    SignoffRecommendation,
     FreshnessCheck,
     FailureRecord,
     PhaseCompletionRecord,
@@ -437,4 +442,88 @@ def validate_phase7_required_inputs(required_paths: list[Path]) -> list[Path]:
     if missing:
         missing_text = ', '.join(str(path) for path in missing)
         raise ValueError(f'phase7 missing upstream artifacts: {missing_text}')
+    return required_paths
+
+
+def validate_operator_verdict(verdict: OperatorVerdict) -> OperatorVerdict:
+    if verdict.verdict_status not in {'approved', 'caution', 'reject'}:
+        raise ValueError('invalid verdict_status')
+    if verdict.signoff_recommendation not in {
+        'approve_today_output',
+        'review_with_caution_before_signoff',
+        'reject_until_manual_resolution',
+    }:
+        raise ValueError('invalid signoff_recommendation')
+    if not verdict.required_manual_checks:
+        raise ValueError('required_manual_checks cannot be empty')
+    if verdict.verdict_status == 'approved' and verdict.escalation_needed:
+        raise ValueError('approved verdict cannot require escalation')
+    return verdict
+
+
+def validate_signoff_recommendation(signoff: SignoffRecommendation) -> SignoffRecommendation:
+    if signoff.verdict_status not in {'approved', 'caution', 'reject'}:
+        raise ValueError('invalid signoff verdict status')
+    if signoff.verdict_status == 'approved' and signoff.recommendation != 'approve_today_output':
+        raise ValueError('approved verdict must map to approve_today_output')
+    if signoff.verdict_status == 'caution' and signoff.recommendation != 'review_with_caution_before_signoff':
+        raise ValueError('caution verdict must map to review_with_caution_before_signoff')
+    if signoff.verdict_status == 'reject' and signoff.recommendation != 'reject_until_manual_resolution':
+        raise ValueError('reject verdict must map to reject_until_manual_resolution')
+    if signoff.approved_for_next_cycle and signoff.verdict_status != 'approved':
+        raise ValueError('only approved verdict can be approved_for_next_cycle')
+    return signoff
+
+
+def validate_daily_rollout_report(report: DailyRolloutReport) -> DailyRolloutReport:
+    if report.run_mode not in {'sample', 'live'}:
+        raise ValueError('invalid rollout run_mode')
+    if report.health_state not in {'healthy', 'degraded', 'failed'}:
+        raise ValueError('invalid rollout health_state')
+    if report.operator_verdict not in {'approved', 'caution', 'reject'}:
+        raise ValueError('invalid rollout operator_verdict')
+    if report.operator_verdict == 'approved' and report.health_state == 'failed':
+        raise ValueError('approved rollout cannot be failed')
+    if report.operator_verdict == 'reject' and report.signoff_recommendation != 'reject_until_manual_resolution':
+        raise ValueError('reject rollout must require manual resolution')
+    if not report.inspect_first:
+        raise ValueError('rollout inspect_first cannot be empty')
+    return report
+
+
+def validate_rollout_history(history: RolloutHistory) -> RolloutHistory:
+    if history.window_days != 30:
+        raise ValueError('rollout history must use 30-day window')
+    if len(history.records) > history.window_days:
+        raise ValueError('rollout history exceeds window')
+    last_key = ''
+    seen_keys: set[str] = set()
+    for row in history.records:
+        if row.health_state not in {'healthy', 'degraded', 'failed'}:
+            raise ValueError('invalid rollout history health_state')
+        compound = f'{row.run_date}:{row.run_mode}'
+        if compound in seen_keys:
+            raise ValueError('duplicate rollout history day+mode entry')
+        seen_keys.add(compound)
+        if compound < last_key:
+            raise ValueError('rollout history must be sorted by run_date')
+        last_key = compound
+    return history
+
+
+def validate_rollout_metadata(metadata: RolloutMetadata) -> RolloutMetadata:
+    if metadata.phase != 'phase8':
+        raise ValueError('rollout metadata phase must be phase8')
+    if metadata.history_window_days != 30:
+        raise ValueError('rollout metadata history window must be 30')
+    if not metadata.upstream_inputs or not metadata.generated_outputs:
+        raise ValueError('rollout metadata requires upstream_inputs and generated_outputs')
+    return metadata
+
+
+def validate_phase8_required_inputs(required_paths: list[Path]) -> list[Path]:
+    missing = [path for path in required_paths if not path.exists()]
+    if missing:
+        missing_text = ', '.join(str(path) for path in missing)
+        raise ValueError(f'phase8 missing upstream artifacts: {missing_text}')
     return required_paths

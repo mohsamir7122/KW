@@ -2,7 +2,7 @@
 
 نظام استخبارات سوق الكويت مبني بنهج **candidate-selection** وليس تنفيذ لحظي.
 
-## Architecture Overview (Phase 7)
+## Architecture Overview (Phase 8)
 - `signal_engine.py`: حساب الإشارات الأساسية (trend, quality, liquidity, value, event, coverage) مع حدود واضحة وmissing-data penalty.
 - `evidence_normalization.py`: تحويل الأدلة الخام إلى سجلات typed + quarantine للكيانات غير القابلة للتداول/السياقية.
 - `candidate_assembly.py`: دمج universe + signals + governance + evidence وإنتاج candidates/exclusions/explanations/quality report.
@@ -14,8 +14,9 @@
 - `phase5.py`: بناء محفظة من المرشحين المعتمدين، تطبيق ضوابط مخاطر قابلة للتدقيق، إنشاء خطة rebalance، وإنتاج تنبيهات تشغيلية structured.
 - `phase6.py`: طبقة تشغيل scheduling-ready: سجل تشغيل run records، health monitoring، فحوصات freshness/stale data، تصنيف failures، ونشر operating status قابل للتفسير.
 - `phase7.py`: طبقة dashboard/reporting للاستخدام اليومي البشري: snapshot موحّد، daily review summary، checklist منظّم بحسب severity/priority، وتقرير consolidated_latest_report.
+- `phase8.py`: طبقة rollout automation لمدة 30 يوم: توليد daily rollout report، verdict آلي (`approved/caution/reject`)، sign-off recommendation، وحفظ rollout history بشكل append-safe.
 
-## Runtime artifacts (Phase 7)
+## Runtime artifacts (Phase 8)
 ### Publishing + Quality
 - `runtime/candidates/candidates.json`
 - `runtime/quality/exclusions.json`
@@ -36,6 +37,9 @@
 - `runtime/latest/dashboard_snapshot.json`
 - `runtime/latest/daily_review_latest.json`
 - `runtime/latest/consolidated_latest_report.json`
+- `runtime/latest/daily_rollout_latest.json`
+- `runtime/latest/operator_verdict_latest.json`
+- `runtime/latest/signoff_recommendation_latest.json`
 
 ### Learning scope (`runtime/learning`)
 - `evaluation_snapshot.json`: لقطة تاريخية صالحة للتقييم.
@@ -61,8 +65,12 @@
 - `runtime/quality/operator_summary_report.json`
 - `runtime/quality/review_checklist_report.json`
 - `runtime/quality/reporting_metadata.json`
+- `runtime/quality/daily_rollout_report.json`
+- `runtime/quality/operator_verdict_report.json`
+- `runtime/quality/rollout_metadata.json`
 - `runtime/latest/benchmark_latest.json`
 - `runtime/latest/decision_quality_latest.json`
+- `runtime/learning/rollout_30_day_history.json`
 
 ## فلسفة Phase 5 وحدودها
 - **Portfolio construction** يستهلك مخرجات validated من المراحل السابقة فقط؛ لا يعيد كتابة ranking ولا governance.
@@ -81,19 +89,29 @@ python scripts/type_check.py
 pytest -q
 ```
 
-## Workflow المراجعة اليومية (Phase 7)
+## التشغيل المجدول (GitHub Actions)
+- workflow `.github/workflows/market-intelligence-os.yml` يدعم:
+  - `workflow_dispatch` للتشغيل اليدوي (sample/live + phase override حتى `phase8`).
+  - `schedule` يومي عبر cron لتشغيل آلي repo-native بعد الدمج.
+- في البيئات ephemeral (مثل CI) قد لا تبقى `runtime/` بين الجلسات؛ لذلك Phase 8 يدوّن limitation صريح داخل `runtime/quality/rollout_metadata.json`.
+
+## Workflow المراجعة اليومية (Phase 8)
 - شغّل `python scripts/run_phase.py --sample-mode` لإنتاج أحدث snapshots.
 - ابدأ من `runtime/latest/dashboard_snapshot.json` لفهم الحالة التشغيلية والاستثمارية بسرعة.
 - راجع `runtime/latest/daily_review_latest.json` لمعرفة: هل التشغيل ناجح؟ ما أهم التغييرات؟ ما الذي يجب فحصه أولاً؟
 - نفّذ checklist من `runtime/quality/review_checklist_report.json` بترتيب `priority` مع مراعاة `severity`.
 - اعتمد `runtime/latest/consolidated_latest_report.json` كpayload موحّد للإنسان/الآلة.
+- راجع `runtime/latest/daily_rollout_latest.json` لمعرفة حالة اليوم (`healthy/degraded/failed`) وحكم التشغيل.
+- راجع `runtime/latest/operator_verdict_latest.json` و`runtime/latest/signoff_recommendation_latest.json` قبل قرار الاعتماد.
+- استخدم `runtime/learning/rollout_30_day_history.json` لمراقبة اتجاه الاستقرار عبر آخر 30 يوم.
 
-## فلسفة Phase 7 وحدودها
-- Phase 7 **لا** يعيد كتابة ranking أو portfolio أو monitoring؛ بل يستهلك مخرجات المراحل السابقة فقط.
-- المخرجات موجهة للتشغيل البشري اليومي مع explainability واضحة لأسباب الحالة والأولوية.
-- لا يوجد frontend ثقيل أو cloud deployment في هذه المرحلة (خارج النطاق).
+## فلسفة Phase 8 وحدودها
+- Phase 8 **لا** يعيد كتابة ranking أو portfolio أو monitoring أو dashboard؛ بل يستهلك مخرجات المراحل السابقة فقط.
+- verdict/sign-off في هذه المرحلة توصية تشغيلية آلية قابلة للتدقيق، وليست تنفيذ تداول تلقائي.
+- history window مضبوط على 30 يوم مع append-safe semantics وتحقق fail-closed ضد التناقضات.
+- لا يوجد external DB أو cloud infra دائم في هذه المرحلة (خارج النطاق).
 
-## ملاحظات ما بعد Phase 7
+## ملاحظات ما بعد Phase 8
 - المعايرة bounded ومقيّدة عند sparse data (shrinkage + limitations واضحة).
 - benchmark الحالي بسيط auditable baseline (صِفر عائد) ومناسب للحوكمة.
 - decision quality يقدّم score تفسيري مع confidence bands وحدود الاستخدام.
