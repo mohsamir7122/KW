@@ -1,4 +1,4 @@
-# Architecture Hardening + Phase 6 Operational Health Layer
+# Architecture Hardening + Phase 7 Dashboard/Reporting Layer
 
 ## Phase 2 core modules (preserved)
 - `signal_engine.py`: produces bounded signal vector per tradable equity.
@@ -20,6 +20,9 @@
 ## New Phase 6 modules
 - `phase6.py`: publishes scheduler-ready run records, deterministic sample-mode scheduler behavior, freshness checks, failure classification, and explainable operating-status snapshots.
 
+## New Phase 7 modules
+- `phase7.py`: consumes validated Phase 3-6 latest outputs and publishes deterministic dashboard-ready snapshot, machine/human daily review summary, structured operator checklist, reporting metadata, and consolidated latest report.
+
 ## Boundary rules
 - Governance emits trust and contribution eligibility only.
 - Ranking consumes validated signal + trust once (no double counting).
@@ -28,6 +31,7 @@
 - Phase 4 calibration is bounded and explicitly sparse-data limited; it never bypasses governance/ranking boundaries.
 - Phase 5 portfolio construction is downstream-only: it consumes validated upstream outputs and never mutates ranking/governance semantics.
 - Phase 6 operating health is observational and publish-only; it never mutates candidate/ranking/portfolio decisions.
+- Phase 7 reporting is consume-and-summarize only; it never mutates ranking, portfolio construction, risk controls, or monitoring state.
 
 ## End-to-end flow (`run_phase.py --sample-mode`)
 1. Validate universe + quarterly inputs.
@@ -52,6 +56,10 @@
 20. Enrich `runtime/latest/run_manifest.json` with Phase 5 validations/writes.
 21. Publish Phase 6 scheduler/health/freshness/failure/operating-status artifacts and append run history.
 22. Enrich `runtime/latest/run_manifest.json` with Phase 6 validations/writes.
+23. Build Phase 7 dashboard snapshot from validated latest artifacts.
+24. Build Phase 7 daily review summary and severity-ordered operator checklist.
+25. Build reporting metadata + consolidated latest report and publish Phase 7 outputs.
+26. Enrich `runtime/latest/run_manifest.json` with Phase 7 validations/writes.
 
 ## Evaluation limitations (explicit by design)
 - This is walk-forward scaffolding, not a full institutional backtester.
@@ -81,6 +89,12 @@
 - `runtime/quality/failure_report.json`: classified failures with severity and retryability.
 - `runtime/quality/freshness_report.json`: per-artifact freshness/staleness checks.
 - `runtime/learning/operating_run_history.json`: rolling operating run history records.
+- `runtime/latest/dashboard_snapshot.json`: compact consolidated operating/investment snapshot for dashboards.
+- `runtime/latest/daily_review_latest.json`: machine/human-readable daily review summary.
+- `runtime/latest/consolidated_latest_report.json`: unified operator+machine reporting payload.
+- `runtime/quality/operator_summary_report.json`: operator-facing daily summary artifact.
+- `runtime/quality/review_checklist_report.json`: structured severity/priority ordered checklist.
+- `runtime/quality/reporting_metadata.json`: reporting lineage, explainability notes, and deterministic metadata.
 
 ## Remaining later-phase work
 - richer multi-horizon outcome windows and event-aligned attribution.

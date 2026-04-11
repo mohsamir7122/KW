@@ -455,3 +455,71 @@ class OperatingStatusSnapshot:
     health_status: str
     scheduler_status: str
     degraded_reasons: list[str]
+
+
+@dataclass(frozen=True)
+class DashboardSnapshot:
+    run_id: str
+    mode: str
+    operating_status: str
+    health_status: str
+    status_bucket: str
+    top_candidates: list[dict[str, object]]
+    decision_quality_summary: dict[str, object]
+    benchmark_summary: dict[str, object]
+    portfolio_summary: dict[str, object]
+    rebalance_summary: dict[str, object]
+    alert_summary: dict[str, object]
+
+
+@dataclass(frozen=True)
+class DailyReviewSummary:
+    run_id: str
+    run_completed_successfully: bool
+    system_state: str
+    health_summary: str
+    important_portfolio_changes: list[dict[str, object]]
+    material_alerts: list[dict[str, object]]
+    decision_quality_acceptable: bool
+    benchmark_context_acceptable: bool
+    degraded_reasons: list[dict[str, object]]
+    inspect_first: list[str]
+    human_summary: str
+
+
+@dataclass(frozen=True)
+class ReviewChecklistItem:
+    item_id: str
+    title: str
+    severity: str
+    priority: int
+    passed: bool
+    rationale: str
+
+
+@dataclass(frozen=True)
+class ReviewChecklist:
+    run_id: str
+    ordered: bool
+    checklist_type: str
+    items: list[ReviewChecklistItem]
+
+
+@dataclass(frozen=True)
+class ReportingMetadata:
+    phase: str
+    mode: str
+    deterministic_sample_mode: bool
+    upstream_inputs: list[str]
+    generated_outputs: list[str]
+    explainability_notes: list[str]
+
+
+@dataclass(frozen=True)
+class ConsolidatedLatestReport:
+    run_id: str
+    dashboard_snapshot: dict[str, object]
+    daily_review_summary: dict[str, object]
+    operator_checklist: dict[str, object]
+    reporting_metadata: dict[str, object]
+    operator_ready: bool

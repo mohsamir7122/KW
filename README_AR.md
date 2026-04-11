@@ -2,7 +2,7 @@
 
 نظام استخبارات سوق الكويت مبني بنهج **candidate-selection** وليس تنفيذ لحظي.
 
-## Architecture Overview (Phase 6)
+## Architecture Overview (Phase 7)
 - `signal_engine.py`: حساب الإشارات الأساسية (trend, quality, liquidity, value, event, coverage) مع حدود واضحة وmissing-data penalty.
 - `evidence_normalization.py`: تحويل الأدلة الخام إلى سجلات typed + quarantine للكيانات غير القابلة للتداول/السياقية.
 - `candidate_assembly.py`: دمج universe + signals + governance + evidence وإنتاج candidates/exclusions/explanations/quality report.
@@ -13,8 +13,9 @@
 - `phase4.py`: معايرة bounded للإشارات مع فصل واضح بين raw/calibrated، مقارنة benchmark بسيطة وقابلة للتدقيق، وتقرير decision quality مع confidence bands.
 - `phase5.py`: بناء محفظة من المرشحين المعتمدين، تطبيق ضوابط مخاطر قابلة للتدقيق، إنشاء خطة rebalance، وإنتاج تنبيهات تشغيلية structured.
 - `phase6.py`: طبقة تشغيل scheduling-ready: سجل تشغيل run records، health monitoring، فحوصات freshness/stale data، تصنيف failures، ونشر operating status قابل للتفسير.
+- `phase7.py`: طبقة dashboard/reporting للاستخدام اليومي البشري: snapshot موحّد، daily review summary، checklist منظّم بحسب severity/priority، وتقرير consolidated_latest_report.
 
-## Runtime artifacts (Phase 6)
+## Runtime artifacts (Phase 7)
 ### Publishing + Quality
 - `runtime/candidates/candidates.json`
 - `runtime/quality/exclusions.json`
@@ -32,6 +33,9 @@
 - `runtime/latest/operating_status_latest.json`
 - `runtime/latest/health_status_latest.json`
 - `runtime/latest/scheduler_status_latest.json`
+- `runtime/latest/dashboard_snapshot.json`
+- `runtime/latest/daily_review_latest.json`
+- `runtime/latest/consolidated_latest_report.json`
 
 ### Learning scope (`runtime/learning`)
 - `evaluation_snapshot.json`: لقطة تاريخية صالحة للتقييم.
@@ -54,6 +58,9 @@
 - `runtime/quality/health_report.json`
 - `runtime/quality/failure_report.json`
 - `runtime/quality/freshness_report.json`
+- `runtime/quality/operator_summary_report.json`
+- `runtime/quality/review_checklist_report.json`
+- `runtime/quality/reporting_metadata.json`
 - `runtime/latest/benchmark_latest.json`
 - `runtime/latest/decision_quality_latest.json`
 
@@ -74,7 +81,19 @@ python scripts/type_check.py
 pytest -q
 ```
 
-## ملاحظات Phase 6
+## Workflow المراجعة اليومية (Phase 7)
+- شغّل `python scripts/run_phase.py --sample-mode` لإنتاج أحدث snapshots.
+- ابدأ من `runtime/latest/dashboard_snapshot.json` لفهم الحالة التشغيلية والاستثمارية بسرعة.
+- راجع `runtime/latest/daily_review_latest.json` لمعرفة: هل التشغيل ناجح؟ ما أهم التغييرات؟ ما الذي يجب فحصه أولاً؟
+- نفّذ checklist من `runtime/quality/review_checklist_report.json` بترتيب `priority` مع مراعاة `severity`.
+- اعتمد `runtime/latest/consolidated_latest_report.json` كpayload موحّد للإنسان/الآلة.
+
+## فلسفة Phase 7 وحدودها
+- Phase 7 **لا** يعيد كتابة ranking أو portfolio أو monitoring؛ بل يستهلك مخرجات المراحل السابقة فقط.
+- المخرجات موجهة للتشغيل البشري اليومي مع explainability واضحة لأسباب الحالة والأولوية.
+- لا يوجد frontend ثقيل أو cloud deployment في هذه المرحلة (خارج النطاق).
+
+## ملاحظات ما بعد Phase 7
 - المعايرة bounded ومقيّدة عند sparse data (shrinkage + limitations واضحة).
 - benchmark الحالي بسيط auditable baseline (صِفر عائد) ومناسب للحوكمة.
 - decision quality يقدّم score تفسيري مع confidence bands وحدود الاستخدام.
@@ -83,4 +102,4 @@ pytest -q
 - sample mode deterministic.
 - live mode متاح مع fallback واضح، وقد يستخدم outcome feed محدود حسب البيئة.
 - scheduler sample mode deterministic لضمان reproducible status snapshots وrun history ثابتة.
-- لاحقًا: تنفيذ تداول حي، تحسين optimizer متعدد القيود، وتقييم multi-horizon أوسع.
+- لاحقًا: UI تفاعلي خفيف فوق artifacts الحالية، تنفيذ تداول حي، تحسين optimizer متعدد القيود، وتقييم multi-horizon أوسع.
