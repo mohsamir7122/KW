@@ -21,7 +21,7 @@ from kw_mi_os.governance import governance_outputs
 from kw_mi_os.historical_snapshot import build_historical_snapshot
 from kw_mi_os.ingestion import default_source_catalog, fetch_json
 from kw_mi_os.learning import build_learning_records, learning_records_to_json
-from kw_mi_os.models import ExclusionRecord, SignalInput, SourceClass, SourceEvidenceRecord
+from kw_mi_os.models import ExclusionRecord, PortfolioSnapshot, SignalInput, SourceClass, SourceEvidenceRecord
 from kw_mi_os.phase4 import (
     build_benchmark_result,
     build_decision_quality_report,
@@ -29,22 +29,28 @@ from kw_mi_os.phase4 import (
     calibrated_records_to_json,
     calibrate_signals,
 )
+from kw_mi_os.phase5 import apply_risk_controls, alerts_to_json, build_alerts, construct_portfolio_proposal, plan_rebalance
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
 from kw_mi_os.source_growth import build_source_growth_record, source_growth_to_json
 from kw_mi_os.universe import load_tradable_universe
 from kw_mi_os.validation import (
-    validate_candidate_outcomes,
+    validate_alert_records,
     validate_benchmark_result,
     validate_calibrated_signals,
     validate_calibration_metadata,
+    validate_candidate_outcomes,
     validate_decision_quality_report,
     validate_evaluation_report,
     validate_historical_snapshot,
     validate_learning_records,
     validate_manifest,
+    validate_portfolio_proposal,
+    validate_portfolio_snapshot_compatibility,
     validate_quarterly,
+    validate_rebalance_actions,
+    validate_risk_control_result,
     validate_source_growth_record,
     validate_signal_usefulness_report,
 )
@@ -56,10 +62,22 @@ def _deterministic_observed_outcomes(mode: str) -> dict[str, float]:
     return {'NBK': 0.021}
 
 
+def _load_prior_snapshot(path: Path) -> PortfolioSnapshot | None:
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding='utf-8'))
+    return PortfolioSnapshot(
+        snapshot_id=str(data['snapshot_id']),
+        as_of_utc=str(data['as_of_utc']),
+        positions=list(data['positions']),
+        residual_cash_weight=float(data.get('residual_cash_weight', 0.0)),
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
@@ -145,7 +163,10 @@ def main() -> int:
 
     phase3_outcomes = []
     phase3_snapshot_id = 'kw_phase3_sample_2026q1'
-    if args.phase in {'all', 'phase3', 'phase4'}:
+    benchmark = None
+    decision_quality = None
+    calibrated_signals = []
+    if args.phase in {'all', 'phase3', 'phase4', 'phase5'}:
         snapshot = build_historical_snapshot(
             snapshot_id=phase3_snapshot_id,
             as_of_date=date.fromisoformat('2026-04-10'),
@@ -215,7 +236,7 @@ def main() -> int:
             'source_growth_schema',
         ])
 
-    if args.phase in {'all', 'phase4'}:
+    if args.phase in {'all', 'phase4', 'phase5'}:
         calibration_metadata, calibrated_signals = calibrate_signals(phase3_snapshot_id, phase3_outcomes)
         validate_calibration_metadata(calibration_metadata)
         validate_calibrated_signals(calibrated_signals)
@@ -261,10 +282,98 @@ def main() -> int:
             'phase4_decision_quality_schema',
         ])
 
+    if args.phase in {'all', 'phase5'}:
+        if benchmark is None or decision_quality is None:
+            raise ValueError('phase5 requires phase4 outputs')
+
+        prior_portfolio_path = ROOT / 'runtime' / 'latest' / 'portfolio_latest.json'
+        prior_snapshot = _load_prior_snapshot(prior_portfolio_path)
+
+        liquidity_by_symbol = {symbol: signal.liquidity_signal for symbol, signal in signals.items()}
+        proposal = construct_portfolio_proposal(
+            candidates=candidates,
+            calibrated_signals=calibrated_signals,
+            decision_quality_score=decision_quality.decision_quality_score,
+            liquidity_by_symbol=liquidity_by_symbol,
+            tradable_symbols={u.symbol for u in tradable},
+            min_inclusion_quality=0.1,
+            max_holdings=3,
+            target_invested_weight=1.0,
+        )
+        validate_portfolio_proposal(proposal)
+
+        risk_result = apply_risk_controls(
+            proposal=proposal,
+            prior_snapshot=prior_snapshot,
+            max_single_position_weight=0.55,
+            max_total_active_positions=3,
+            min_liquidity_signal=0.3,
+            min_decision_quality_signal=0.15,
+            turnover_cap=0.8,
+            cash_buffer=0.02,
+        )
+        validate_risk_control_result(risk_result)
+        validate_portfolio_snapshot_compatibility(prior_snapshot, risk_result.risk_adjusted_snapshot)
+
+        rebalance_actions = plan_rebalance(prior_snapshot, risk_result.risk_adjusted_snapshot)
+        validate_rebalance_actions(rebalance_actions)
+
+        alerts = build_alerts(decision_quality, proposal, risk_result, rebalance_actions, benchmark.excess_return)
+        validate_alert_records(alerts)
+
+        portfolio_latest_path = ROOT / 'runtime' / 'latest' / 'portfolio_latest.json'
+        rebalance_latest_path = ROOT / 'runtime' / 'latest' / 'rebalance_latest.json'
+        alerts_latest_path = ROOT / 'runtime' / 'latest' / 'alerts_latest.json'
+        portfolio_quality_path = ROOT / 'runtime' / 'quality' / 'portfolio_quality_report.json'
+        risk_quality_path = ROOT / 'runtime' / 'quality' / 'risk_control_report.json'
+        alert_quality_path = ROOT / 'runtime' / 'quality' / 'alert_report.json'
+        decision_history_path = ROOT / 'runtime' / 'learning' / 'portfolio_decision_history.json'
+
+        portfolio_latest_path.write_text(json.dumps(asdict(risk_result.risk_adjusted_snapshot), indent=2), encoding='utf-8')
+        rebalance_latest_path.write_text(json.dumps([asdict(a) for a in rebalance_actions], indent=2), encoding='utf-8')
+        alerts_latest_path.write_text(json.dumps(alerts_to_json(alerts), indent=2), encoding='utf-8')
+        portfolio_quality_path.write_text(json.dumps(asdict(proposal.quality_report), indent=2), encoding='utf-8')
+        risk_quality_path.write_text(json.dumps(asdict(risk_result), indent=2), encoding='utf-8')
+        alert_quality_path.write_text(json.dumps({'total_alerts': len(alerts), 'alerts': alerts_to_json(alerts)}, indent=2), encoding='utf-8')
+
+        history: list[dict[str, object]] = []
+        if decision_history_path.exists():
+            history = list(json.loads(decision_history_path.read_text(encoding='utf-8')))
+        history.append(
+            {
+                'proposal': asdict(proposal),
+                'risk_result': asdict(risk_result),
+                'rebalance_actions': [asdict(a) for a in rebalance_actions],
+                'alerts': alerts_to_json(alerts),
+            }
+        )
+        decision_history_path.write_text(json.dumps(history[-20:], indent=2), encoding='utf-8')
+
+        files_written.extend([
+            str(portfolio_latest_path),
+            str(rebalance_latest_path),
+            str(alerts_latest_path),
+            str(portfolio_quality_path),
+            str(risk_quality_path),
+            str(alert_quality_path),
+            str(decision_history_path),
+        ])
+        validations.extend([
+            'phase5_portfolio_proposal_schema',
+            'phase5_risk_control_schema',
+            'phase5_rebalance_schema',
+            'phase5_alert_schema',
+            'phase5_snapshot_compatibility',
+        ])
+
     checksums = {
         'config/kuwait_equities_master.csv': sha256_of_text(universe_file.read_text(encoding='utf-8')),
         'data/quarterly_history.csv': sha256_of_text(quarterly_file.read_text(encoding='utf-8')),
     }
+
+    warnings: list[str] = [] if mode == 'sample' else ['live_mode_selected_manual_review_required', 'phase3_live_uses_limited_outcome_feed']
+    if mode == 'live' and args.phase in {'all', 'phase5'}:
+        warnings.append('phase5_live_requires_external_portfolio_execution_inputs_fallback_only')
 
     manifest = RunManifest(
         mode=mode,
@@ -273,7 +382,7 @@ def main() -> int:
         files_read=list(contract.reads),
         files_written=files_written,
         validations=validations + ['manifest_schema'],
-        warnings=[] if mode == 'sample' else ['live_mode_selected_manual_review_required', 'phase3_live_uses_limited_outcome_feed'],
+        warnings=warnings,
         failures=[],
         input_checksums=checksums,
     )

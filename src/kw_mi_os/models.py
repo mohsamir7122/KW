@@ -300,3 +300,85 @@ class DecisionQualityReport:
     signal_usefulness: dict[str, float]
     summary: str
     limitations: list[str]
+
+
+@dataclass(frozen=True)
+class ProposedPosition:
+    symbol: str
+    canonical_entity_id: str
+    target_weight: float
+    rank: int
+    final_score: float
+    calibrated_signal: float
+    decision_quality_score: float
+    liquidity_signal: float
+    tradable: bool
+    inclusion_reason: str
+
+
+@dataclass(frozen=True)
+class PortfolioQualityReport:
+    portfolio_quality_score: float
+    quality_bucket: str
+    included_count: int
+    excluded_count: int
+    average_decision_quality: float
+    limitations: list[str]
+
+
+@dataclass(frozen=True)
+class PortfolioProposal:
+    proposal_id: str
+    generated_at_utc: str
+    positions: list[ProposedPosition]
+    excluded_candidates: list[dict[str, object]]
+    max_holdings: int
+    min_inclusion_quality: float
+    total_target_weight: float
+    quality_report: PortfolioQualityReport
+
+
+@dataclass(frozen=True)
+class RiskControlCheck:
+    control_name: str
+    status: str
+    binding: bool
+    details: dict[str, object]
+
+
+@dataclass(frozen=True)
+class PortfolioSnapshot:
+    snapshot_id: str
+    as_of_utc: str
+    positions: list[dict[str, object]]
+    residual_cash_weight: float
+
+
+@dataclass(frozen=True)
+class RiskControlResult:
+    proposal_id: str
+    controls: list[RiskControlCheck]
+    adjusted_positions: list[ProposedPosition]
+    residual_cash_weight: float
+    turnover: float | None
+    status: str
+    risk_adjusted_snapshot: PortfolioSnapshot
+
+
+@dataclass(frozen=True)
+class RebalanceAction:
+    symbol: str
+    canonical_entity_id: str
+    action: str
+    prior_weight: float
+    target_weight: float
+    delta_weight: float
+    reason: str
+
+
+@dataclass(frozen=True)
+class AlertRecord:
+    alert_type: str
+    severity: str
+    message: str
+    context: dict[str, object]
