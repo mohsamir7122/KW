@@ -22,12 +22,18 @@ from kw_mi_os.models import (
     CalibratedSignalRecord,
     CandidateRecord,
     DecisionQualityReport,
+    FailureRecord,
+    FreshnessCheck,
+    HealthStatusReport,
+    OperatingStatusSnapshot,
+    PhaseCompletionRecord,
     PortfolioProposal,
     PortfolioQualityReport,
     PortfolioSnapshot,
     RebalanceAction,
     RiskControlCheck,
     RiskControlResult,
+    SchedulerStatus,
     SignalInput,
     SourceClass,
     SourceEvidenceRecord,
@@ -40,37 +46,50 @@ from kw_mi_os.phase4 import (
 )
 from kw_mi_os.phase5 import apply_risk_controls, build_alerts, construct_portfolio_proposal, plan_rebalance
 from kw_mi_os.phase6 import build_health_status_report
+from kw_mi_os.phase7 import (
+    build_consolidated_latest_report,
+    build_dashboard_snapshot,
+    build_daily_review_summary,
+    build_reporting_metadata,
+    build_review_checklist,
+)
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.ranking import rank_candidates
 from kw_mi_os.signal_engine import compute_signals
 from kw_mi_os.source_growth import build_source_growth_record
 from kw_mi_os.universe import load_tradable_universe
 from kw_mi_os.validation import (
+    validate_alert_records,
     validate_candidate_outcomes,
     validate_benchmark_result,
     validate_calibrated_signals,
     validate_calibration_metadata,
+    validate_consolidated_latest_report,
+    validate_daily_review_summary,
+    validate_dashboard_snapshot,
     validate_decision_quality_report,
     validate_evaluation_report,
+    validate_failure_records,
+    validate_freshness_checks,
     validate_historical_snapshot,
     validate_learning_records,
     validate_manifest,
+    validate_operating_run_record,
+    validate_operating_status_snapshot,
+    validate_phase7_required_inputs,
+    validate_phase_completion,
     validate_portfolio_proposal,
     validate_portfolio_snapshot_compatibility,
     validate_quarterly,
     validate_rebalance_actions,
+    validate_reporting_metadata,
+    validate_review_checklist,
     validate_risk_control_result,
+    validate_scheduler_status,
     validate_source_growth_record,
     validate_signal_usefulness_report,
-    validate_alert_records,
-    validate_failure_records,
-    validate_freshness_checks,
     validate_health_status_report,
     validate_universe,
-    validate_operating_run_record,
-    validate_operating_status_snapshot,
-    validate_phase_completion,
-    validate_scheduler_status,
 )
 
 
@@ -120,12 +139,13 @@ def test_ranking_no_double_counting_of_trust():
 
 
 def test_phase_contracts_defined_and_idempotent():
-    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6'}
+    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7'}
     assert all(v.idempotent for v in PHASE_CONTRACTS.values())
     assert PHASE_CONTRACTS['phase3'].outputs
     assert PHASE_CONTRACTS['phase4'].outputs
     assert PHASE_CONTRACTS['phase5'].outputs
     assert PHASE_CONTRACTS['phase6'].outputs
+    assert PHASE_CONTRACTS['phase7'].outputs
 
 
 def test_historical_snapshot_validation_and_point_in_time_behavior():
@@ -242,10 +262,16 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
         ROOT / 'runtime/latest/operating_status_latest.json',
         ROOT / 'runtime/latest/health_status_latest.json',
         ROOT / 'runtime/latest/scheduler_status_latest.json',
+        ROOT / 'runtime/latest/dashboard_snapshot.json',
+        ROOT / 'runtime/latest/daily_review_latest.json',
+        ROOT / 'runtime/latest/consolidated_latest_report.json',
         ROOT / 'runtime/quality/operating_status_report.json',
         ROOT / 'runtime/quality/health_report.json',
         ROOT / 'runtime/quality/failure_report.json',
         ROOT / 'runtime/quality/freshness_report.json',
+        ROOT / 'runtime/quality/operator_summary_report.json',
+        ROOT / 'runtime/quality/review_checklist_report.json',
+        ROOT / 'runtime/quality/reporting_metadata.json',
         ROOT / 'runtime/learning/operating_run_history.json',
         ROOT / 'runtime/latest/run_manifest.json',
     ]
@@ -258,6 +284,7 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
     assert 'phase4_decision_quality_schema' in manifest['validations']
     assert 'phase5_alert_schema' in manifest['validations']
     assert 'phase6_operating_status_schema' in manifest['validations']
+    assert 'phase7_consolidated_report_schema' in manifest['validations']
 
 
 def test_phase4_outputs_validate_from_sample_outcomes():
@@ -449,3 +476,86 @@ def test_phase6_health_monitoring_and_status_publication():
     validate_operating_status_snapshot(status_snapshot)
     assert scheduler.deterministic_sample_mode is True
     assert status_snapshot.operating_status == 'healthy'
+
+
+def test_phase7_reporting_models_validation_and_contradiction_rejection():
+    subprocess.check_call(['python', 'scripts/run_phase.py', '--sample-mode'])
+    validate_phase7_required_inputs([
+        ROOT / 'runtime/latest/operating_status_latest.json',
+        ROOT / 'runtime/latest/health_status_latest.json',
+        ROOT / 'runtime/latest/candidates_latest.json',
+        ROOT / 'runtime/latest/decision_quality_latest.json',
+        ROOT / 'runtime/latest/benchmark_latest.json',
+        ROOT / 'runtime/latest/portfolio_latest.json',
+        ROOT / 'runtime/latest/rebalance_latest.json',
+        ROOT / 'runtime/latest/alerts_latest.json',
+    ])
+
+    operating = OperatingStatusSnapshot(**json.loads((ROOT / 'runtime/latest/operating_status_latest.json').read_text(encoding='utf-8')))
+    health_json = json.loads((ROOT / 'runtime/latest/health_status_latest.json').read_text(encoding='utf-8'))
+    health = HealthStatusReport(
+        run_id=str(health_json['run_id']),
+        overall_status=str(health_json['overall_status']),
+        scheduler=SchedulerStatus(**health_json['scheduler']),
+        freshness_checks=[FreshnessCheck(**row) for row in health_json['freshness_checks']],
+        failures=[FailureRecord(**row) for row in health_json['failures']],
+        phase_completion=[PhaseCompletionRecord(**row) for row in health_json['phase_completion']],
+        summary=str(health_json['summary']),
+    )
+    candidates = [CandidateRecord(**row) for row in json.loads((ROOT / 'runtime/latest/candidates_latest.json').read_text(encoding='utf-8'))]
+    decision_quality = DecisionQualityReport(**json.loads((ROOT / 'runtime/latest/decision_quality_latest.json').read_text(encoding='utf-8')))
+    benchmark = build_benchmark_result('x', [])
+    portfolio = PortfolioSnapshot(**json.loads((ROOT / 'runtime/latest/portfolio_latest.json').read_text(encoding='utf-8')))
+    rebalance = [RebalanceAction(**row) for row in json.loads((ROOT / 'runtime/latest/rebalance_latest.json').read_text(encoding='utf-8'))]
+    alerts = [AlertRecord(**row) for row in json.loads((ROOT / 'runtime/latest/alerts_latest.json').read_text(encoding='utf-8'))]
+
+    dashboard = build_dashboard_snapshot(
+        run_id=operating.run_id,
+        mode='sample',
+        operating_status=operating,
+        health_report=health,
+        candidates=candidates,
+        decision_quality=decision_quality,
+        benchmark=benchmark,
+        portfolio=portfolio,
+        rebalance_actions=rebalance,
+        alerts=alerts,
+    )
+    validate_dashboard_snapshot(dashboard)
+
+    summary = build_daily_review_summary(dashboard=dashboard, health_report=health, alerts=alerts, rebalance_actions=rebalance)
+    validate_daily_review_summary(summary)
+    checklist = build_review_checklist(summary, dashboard)
+    validate_review_checklist(checklist)
+    metadata = build_reporting_metadata(
+        mode='sample',
+        upstream_inputs=['runtime/latest/health_status_latest.json'],
+        generated_outputs=['runtime/latest/dashboard_snapshot.json'],
+        deterministic=True,
+    )
+    validate_reporting_metadata(metadata)
+    report = build_consolidated_latest_report(dashboard=dashboard, summary=summary, checklist=checklist, metadata=metadata)
+    validate_consolidated_latest_report(report)
+
+    with pytest.raises(ValueError):
+        validate_daily_review_summary(
+            summary.__class__(
+                run_id=summary.run_id,
+                run_completed_successfully=True,
+                system_state='failed',
+                health_summary=summary.health_summary,
+                important_portfolio_changes=summary.important_portfolio_changes,
+                material_alerts=summary.material_alerts,
+                decision_quality_acceptable=summary.decision_quality_acceptable,
+                benchmark_context_acceptable=summary.benchmark_context_acceptable,
+                degraded_reasons=summary.degraded_reasons,
+                inspect_first=summary.inspect_first,
+                human_summary=summary.human_summary,
+            )
+        )
+
+
+def test_phase7_checklist_ordering_and_missing_input_detection():
+    bad_missing = [ROOT / 'runtime/latest/this_input_does_not_exist.json']
+    with pytest.raises(ValueError):
+        validate_phase7_required_inputs(bad_missing)

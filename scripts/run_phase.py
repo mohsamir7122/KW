@@ -21,7 +21,23 @@ from kw_mi_os.governance import governance_outputs
 from kw_mi_os.historical_snapshot import build_historical_snapshot
 from kw_mi_os.ingestion import default_source_catalog, fetch_json
 from kw_mi_os.learning import build_learning_records, learning_records_to_json
-from kw_mi_os.models import ExclusionRecord, PortfolioSnapshot, SignalInput, SourceClass, SourceEvidenceRecord
+from kw_mi_os.models import (
+    AlertRecord,
+    BenchmarkResult,
+    DecisionQualityReport,
+    ExclusionRecord,
+    FailureRecord,
+    FreshnessCheck,
+    HealthStatusReport,
+    OperatingStatusSnapshot,
+    PhaseCompletionRecord,
+    PortfolioSnapshot,
+    RebalanceAction,
+    SchedulerStatus,
+    SignalInput,
+    SourceClass,
+    SourceEvidenceRecord,
+)
 from kw_mi_os.phase4 import (
     build_benchmark_result,
     build_decision_quality_report,
@@ -31,6 +47,13 @@ from kw_mi_os.phase4 import (
 )
 from kw_mi_os.phase5 import apply_risk_controls, alerts_to_json, build_alerts, construct_portfolio_proposal, plan_rebalance
 from kw_mi_os.phase6 import build_health_status_report, to_json
+from kw_mi_os.phase7 import (
+    build_consolidated_latest_report,
+    build_dashboard_snapshot,
+    build_daily_review_summary,
+    build_reporting_metadata,
+    build_review_checklist,
+)
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
@@ -41,6 +64,7 @@ from kw_mi_os.validation import (
     validate_benchmark_result,
     validate_calibrated_signals,
     validate_calibration_metadata,
+    validate_candidate_records,
     validate_candidate_outcomes,
     validate_decision_quality_report,
     validate_evaluation_report,
@@ -61,6 +85,12 @@ from kw_mi_os.validation import (
     validate_phase_completion,
     validate_health_status_report,
     validate_operating_status_snapshot,
+    validate_consolidated_latest_report,
+    validate_daily_review_summary,
+    validate_dashboard_snapshot,
+    validate_phase7_required_inputs,
+    validate_reporting_metadata,
+    validate_review_checklist,
 )
 
 
@@ -85,7 +115,7 @@ def _load_prior_snapshot(path: Path) -> PortfolioSnapshot | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
@@ -168,13 +198,14 @@ def main() -> int:
         'signal_bounds',
         'evidence_normalization',
     ]
+    warnings: list[str] = [] if mode == 'sample' else ['live_mode_selected_manual_review_required', 'phase3_live_uses_limited_outcome_feed']
 
     phase3_outcomes = []
     phase3_snapshot_id = 'kw_phase3_sample_2026q1'
     benchmark = None
     decision_quality = None
     calibrated_signals = []
-    if args.phase in {'all', 'phase3', 'phase4', 'phase5', 'phase6'}:
+    if args.phase in {'all', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7'}:
         snapshot = build_historical_snapshot(
             snapshot_id=phase3_snapshot_id,
             as_of_date=date.fromisoformat('2026-04-10'),
@@ -244,7 +275,7 @@ def main() -> int:
             'source_growth_schema',
         ])
 
-    if args.phase in {'all', 'phase4', 'phase5', 'phase6'}:
+    if args.phase in {'all', 'phase4', 'phase5', 'phase6', 'phase7'}:
         calibration_metadata, calibrated_signals = calibrate_signals(phase3_snapshot_id, phase3_outcomes)
         validate_calibration_metadata(calibration_metadata)
         validate_calibrated_signals(calibrated_signals)
@@ -290,7 +321,7 @@ def main() -> int:
             'phase4_decision_quality_schema',
         ])
 
-    if args.phase in {'all', 'phase5', 'phase6'}:
+    if args.phase in {'all', 'phase5', 'phase6', 'phase7'}:
         if benchmark is None or decision_quality is None:
             raise ValueError('phase5 requires phase4 outputs')
 
@@ -374,7 +405,7 @@ def main() -> int:
             'phase5_snapshot_compatibility',
         ])
 
-    if args.phase in {'all', 'phase6'}:
+    if args.phase in {'all', 'phase6', 'phase7'}:
         current_failures = []
         if internet_status != 'ok':
             current_failures.append('network_unavailable')
@@ -435,12 +466,140 @@ def main() -> int:
             'phase6_operating_status_schema',
         ])
 
+    if args.phase in {'all', 'phase7'}:
+        phase7_inputs = [
+            ROOT / 'runtime' / 'latest' / 'operating_status_latest.json',
+            ROOT / 'runtime' / 'latest' / 'health_status_latest.json',
+            ROOT / 'runtime' / 'latest' / 'candidates_latest.json',
+            ROOT / 'runtime' / 'latest' / 'decision_quality_latest.json',
+            ROOT / 'runtime' / 'latest' / 'benchmark_latest.json',
+            ROOT / 'runtime' / 'latest' / 'portfolio_latest.json',
+            ROOT / 'runtime' / 'latest' / 'rebalance_latest.json',
+            ROOT / 'runtime' / 'latest' / 'alerts_latest.json',
+        ]
+        try:
+            validate_phase7_required_inputs(phase7_inputs)
+        except ValueError as exc:
+            if mode == 'live':
+                warnings.append('phase7_live_inputs_missing_reporting_fallback_applied')
+                print(f'phase7: fallback reporting mode due to missing inputs: {exc}')
+            else:
+                raise
+
+        operating = json.loads((ROOT / 'runtime' / 'latest' / 'operating_status_latest.json').read_text(encoding='utf-8'))
+        health = json.loads((ROOT / 'runtime' / 'latest' / 'health_status_latest.json').read_text(encoding='utf-8'))
+        latest_candidates = validate_candidate_records(json.loads((ROOT / 'runtime' / 'latest' / 'candidates_latest.json').read_text(encoding='utf-8')))
+        latest_decision_quality = validate_decision_quality_report(
+            DecisionQualityReport(**json.loads((ROOT / 'runtime' / 'latest' / 'decision_quality_latest.json').read_text(encoding='utf-8')))
+        )
+        latest_benchmark = validate_benchmark_result(
+            BenchmarkResult(**json.loads((ROOT / 'runtime' / 'latest' / 'benchmark_latest.json').read_text(encoding='utf-8')))
+        )
+        latest_portfolio = PortfolioSnapshot(**json.loads((ROOT / 'runtime' / 'latest' / 'portfolio_latest.json').read_text(encoding='utf-8')))
+        latest_rebalance = [RebalanceAction(**row) for row in json.loads((ROOT / 'runtime' / 'latest' / 'rebalance_latest.json').read_text(encoding='utf-8'))]
+        latest_alerts = validate_alert_records([AlertRecord(**row) for row in json.loads((ROOT / 'runtime' / 'latest' / 'alerts_latest.json').read_text(encoding='utf-8'))])
+
+        dashboard = build_dashboard_snapshot(
+            run_id=str(operating['run_id']),
+            mode=mode,
+            operating_status=OperatingStatusSnapshot(**operating),
+            health_report=HealthStatusReport(
+                run_id=str(health['run_id']),
+                overall_status=str(health['overall_status']),
+                scheduler=SchedulerStatus(**health['scheduler']),
+                freshness_checks=[FreshnessCheck(**row) for row in health['freshness_checks']],
+                failures=[FailureRecord(**row) for row in health['failures']],
+                phase_completion=[PhaseCompletionRecord(**row) for row in health['phase_completion']],
+                summary=str(health['summary']),
+            ),
+            candidates=latest_candidates,
+            decision_quality=latest_decision_quality,
+            benchmark=latest_benchmark,
+            portfolio=latest_portfolio,
+            rebalance_actions=latest_rebalance,
+            alerts=latest_alerts,
+        )
+        validate_dashboard_snapshot(dashboard)
+
+        summary = build_daily_review_summary(
+            dashboard=dashboard,
+            health_report=HealthStatusReport(
+                run_id=str(health['run_id']),
+                overall_status=str(health['overall_status']),
+                scheduler=SchedulerStatus(**health['scheduler']),
+                freshness_checks=[FreshnessCheck(**row) for row in health['freshness_checks']],
+                failures=[FailureRecord(**row) for row in health['failures']],
+                phase_completion=[PhaseCompletionRecord(**row) for row in health['phase_completion']],
+                summary=str(health['summary']),
+            ),
+            alerts=latest_alerts,
+            rebalance_actions=latest_rebalance,
+        )
+        validate_daily_review_summary(summary)
+
+        checklist = build_review_checklist(summary, dashboard)
+        validate_review_checklist(checklist)
+
+        phase7_output_paths = [
+            'runtime/latest/dashboard_snapshot.json',
+            'runtime/latest/daily_review_latest.json',
+            'runtime/latest/consolidated_latest_report.json',
+            'runtime/quality/operator_summary_report.json',
+            'runtime/quality/review_checklist_report.json',
+            'runtime/quality/reporting_metadata.json',
+        ]
+        metadata = build_reporting_metadata(
+            mode=mode,
+            upstream_inputs=[str(path.relative_to(ROOT)) for path in phase7_inputs],
+            generated_outputs=phase7_output_paths,
+            deterministic=(mode == 'sample'),
+        )
+        validate_reporting_metadata(metadata)
+
+        consolidated = build_consolidated_latest_report(
+            dashboard=dashboard,
+            summary=summary,
+            checklist=checklist,
+            metadata=metadata,
+        )
+        validate_consolidated_latest_report(consolidated)
+
+        dashboard_latest_path = ROOT / 'runtime' / 'latest' / 'dashboard_snapshot.json'
+        daily_latest_path = ROOT / 'runtime' / 'latest' / 'daily_review_latest.json'
+        consolidated_latest_path = ROOT / 'runtime' / 'latest' / 'consolidated_latest_report.json'
+        operator_summary_path = ROOT / 'runtime' / 'quality' / 'operator_summary_report.json'
+        checklist_quality_path = ROOT / 'runtime' / 'quality' / 'review_checklist_report.json'
+        metadata_quality_path = ROOT / 'runtime' / 'quality' / 'reporting_metadata.json'
+
+        dashboard_latest_path.write_text(json.dumps(asdict(dashboard), indent=2), encoding='utf-8')
+        daily_latest_path.write_text(json.dumps(asdict(summary), indent=2), encoding='utf-8')
+        consolidated_latest_path.write_text(json.dumps(asdict(consolidated), indent=2), encoding='utf-8')
+        operator_summary_path.write_text(json.dumps(asdict(summary), indent=2), encoding='utf-8')
+        checklist_quality_path.write_text(json.dumps(asdict(checklist), indent=2), encoding='utf-8')
+        metadata_quality_path.write_text(json.dumps(asdict(metadata), indent=2), encoding='utf-8')
+
+        files_written.extend([
+            str(dashboard_latest_path),
+            str(daily_latest_path),
+            str(consolidated_latest_path),
+            str(operator_summary_path),
+            str(checklist_quality_path),
+            str(metadata_quality_path),
+        ])
+        validations.extend([
+            'phase7_required_inputs_present',
+            'phase7_dashboard_snapshot_schema',
+            'phase7_daily_review_summary_schema',
+            'phase7_review_checklist_schema',
+            'phase7_reporting_metadata_schema',
+            'phase7_consolidated_report_schema',
+        ])
+
     checksums = {
         'config/kuwait_equities_master.csv': sha256_of_text(universe_file.read_text(encoding='utf-8')),
         'data/quarterly_history.csv': sha256_of_text(quarterly_file.read_text(encoding='utf-8')),
     }
 
-    warnings: list[str] = [] if mode == 'sample' else ['live_mode_selected_manual_review_required', 'phase3_live_uses_limited_outcome_feed']
     if mode == 'live' and args.phase in {'all', 'phase5'}:
         warnings.append('phase5_live_requires_external_portfolio_execution_inputs_fallback_only')
 
