@@ -54,6 +54,13 @@ from kw_mi_os.phase7 import (
     build_reporting_metadata,
     build_review_checklist,
 )
+from kw_mi_os.phase8 import (
+    append_rollout_history,
+    build_daily_rollout_report,
+    build_operator_verdict,
+    build_rollout_metadata,
+    build_signoff_recommendation,
+)
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
@@ -91,6 +98,12 @@ from kw_mi_os.validation import (
     validate_phase7_required_inputs,
     validate_reporting_metadata,
     validate_review_checklist,
+    validate_daily_rollout_report,
+    validate_operator_verdict,
+    validate_phase8_required_inputs,
+    validate_rollout_history,
+    validate_rollout_metadata,
+    validate_signoff_recommendation,
 )
 
 
@@ -115,7 +128,7 @@ def _load_prior_snapshot(path: Path) -> PortfolioSnapshot | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
@@ -205,7 +218,7 @@ def main() -> int:
     benchmark = None
     decision_quality = None
     calibrated_signals = []
-    if args.phase in {'all', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7'}:
+    if args.phase in {'all', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}:
         snapshot = build_historical_snapshot(
             snapshot_id=phase3_snapshot_id,
             as_of_date=date.fromisoformat('2026-04-10'),
@@ -275,7 +288,7 @@ def main() -> int:
             'source_growth_schema',
         ])
 
-    if args.phase in {'all', 'phase4', 'phase5', 'phase6', 'phase7'}:
+    if args.phase in {'all', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}:
         calibration_metadata, calibrated_signals = calibrate_signals(phase3_snapshot_id, phase3_outcomes)
         validate_calibration_metadata(calibration_metadata)
         validate_calibrated_signals(calibrated_signals)
@@ -321,7 +334,7 @@ def main() -> int:
             'phase4_decision_quality_schema',
         ])
 
-    if args.phase in {'all', 'phase5', 'phase6', 'phase7'}:
+    if args.phase in {'all', 'phase5', 'phase6', 'phase7', 'phase8'}:
         if benchmark is None or decision_quality is None:
             raise ValueError('phase5 requires phase4 outputs')
 
@@ -405,7 +418,7 @@ def main() -> int:
             'phase5_snapshot_compatibility',
         ])
 
-    if args.phase in {'all', 'phase6', 'phase7'}:
+    if args.phase in {'all', 'phase6', 'phase7', 'phase8'}:
         current_failures = []
         if internet_status != 'ok':
             current_failures.append('network_unavailable')
@@ -466,7 +479,7 @@ def main() -> int:
             'phase6_operating_status_schema',
         ])
 
-    if args.phase in {'all', 'phase7'}:
+    if args.phase in {'all', 'phase7', 'phase8'}:
         phase7_inputs = [
             ROOT / 'runtime' / 'latest' / 'operating_status_latest.json',
             ROOT / 'runtime' / 'latest' / 'health_status_latest.json',
@@ -593,6 +606,127 @@ def main() -> int:
             'phase7_review_checklist_schema',
             'phase7_reporting_metadata_schema',
             'phase7_consolidated_report_schema',
+        ])
+
+    if args.phase in {'all', 'phase8'}:
+        phase8_inputs = [
+            ROOT / 'runtime' / 'latest' / 'operating_status_latest.json',
+            ROOT / 'runtime' / 'latest' / 'health_status_latest.json',
+            ROOT / 'runtime' / 'latest' / 'daily_review_latest.json',
+            ROOT / 'runtime' / 'latest' / 'decision_quality_latest.json',
+            ROOT / 'runtime' / 'latest' / 'benchmark_latest.json',
+            ROOT / 'runtime' / 'latest' / 'rebalance_latest.json',
+            ROOT / 'runtime' / 'latest' / 'alerts_latest.json',
+        ]
+        validate_phase8_required_inputs(phase8_inputs)
+
+        operating = json.loads((ROOT / 'runtime' / 'latest' / 'operating_status_latest.json').read_text(encoding='utf-8'))
+        daily_review = json.loads((ROOT / 'runtime' / 'latest' / 'daily_review_latest.json').read_text(encoding='utf-8'))
+        decision_quality = json.loads((ROOT / 'runtime' / 'latest' / 'decision_quality_latest.json').read_text(encoding='utf-8'))
+        benchmark = json.loads((ROOT / 'runtime' / 'latest' / 'benchmark_latest.json').read_text(encoding='utf-8'))
+        alerts_latest = json.loads((ROOT / 'runtime' / 'latest' / 'alerts_latest.json').read_text(encoding='utf-8'))
+        rebalance_latest = json.loads((ROOT / 'runtime' / 'latest' / 'rebalance_latest.json').read_text(encoding='utf-8'))
+
+        alert_summary = {
+            'total_alerts': len(alerts_latest),
+            'critical_alert_count': sum(1 for row in alerts_latest if row.get('severity') == 'critical'),
+            'warning_alert_count': sum(1 for row in alerts_latest if row.get('severity') == 'warning'),
+        }
+        run_date = '2026-04-10' if mode == 'sample' else date.today().isoformat()
+        health_state = str(operating.get('operating_status', 'failed'))
+        run_completion_status = 'completed' if health_state != 'failed' else 'failed'
+
+        top_issues = [
+            str(row.get('alert_type'))
+            for row in alerts_latest
+            if isinstance(row, dict) and row.get('severity') in {'critical', 'warning'}
+        ]
+        if not top_issues:
+            top_issues = [health_state]
+
+        verdict = build_operator_verdict(
+            run_id=str(operating.get('run_id')),
+            health_state=health_state,
+            decision_quality_score=float(decision_quality.get('decision_quality_score', 0.0)),
+            benchmark_excess_return=float(benchmark.get('excess_return', 0.0)),
+            alert_summary=alert_summary,
+            degraded_reasons=[str(r) for r in operating.get('degraded_reasons', [])],
+            daily_inspect_first=[str(v) for v in daily_review.get('inspect_first', [])],
+        )
+        validate_operator_verdict(verdict)
+        signoff = build_signoff_recommendation(verdict=verdict)
+        validate_signoff_recommendation(signoff)
+
+        report = build_daily_rollout_report(
+            run_id=verdict.run_id,
+            run_date=run_date,
+            run_mode=mode,
+            run_completion_status=run_completion_status,
+            health_state=health_state,
+            alert_summary=alert_summary,
+            top_issues=top_issues,
+            portfolio_rebalance_present=len(rebalance_latest) > 0,
+            decision_quality_present='decision_quality_score' in decision_quality,
+            verdict=verdict,
+        )
+        validate_daily_rollout_report(report)
+
+        history_path = ROOT / 'runtime' / 'learning' / 'rollout_30_day_history.json'
+        existing_history: list[dict[str, object]] = []
+        if history_path.exists():
+            history_json = json.loads(history_path.read_text(encoding='utf-8'))
+            existing_history = list(history_json.get('records', []))
+        history = append_rollout_history(existing=existing_history, report=report, window_days=30)
+        validate_rollout_history(history)
+
+        phase8_output_paths = [
+            'runtime/latest/daily_rollout_latest.json',
+            'runtime/latest/operator_verdict_latest.json',
+            'runtime/latest/signoff_recommendation_latest.json',
+            'runtime/quality/daily_rollout_report.json',
+            'runtime/quality/operator_verdict_report.json',
+            'runtime/quality/rollout_metadata.json',
+            'runtime/learning/rollout_30_day_history.json',
+        ]
+        metadata = build_rollout_metadata(
+            mode=mode,
+            upstream_inputs=[str(path.relative_to(ROOT)) for path in phase8_inputs],
+            generated_outputs=phase8_output_paths,
+            deterministic=(mode == 'sample'),
+        )
+        validate_rollout_metadata(metadata)
+
+        daily_rollout_latest_path = ROOT / 'runtime' / 'latest' / 'daily_rollout_latest.json'
+        verdict_latest_path = ROOT / 'runtime' / 'latest' / 'operator_verdict_latest.json'
+        signoff_latest_path = ROOT / 'runtime' / 'latest' / 'signoff_recommendation_latest.json'
+        rollout_report_path = ROOT / 'runtime' / 'quality' / 'daily_rollout_report.json'
+        verdict_report_path = ROOT / 'runtime' / 'quality' / 'operator_verdict_report.json'
+        rollout_metadata_path = ROOT / 'runtime' / 'quality' / 'rollout_metadata.json'
+
+        daily_rollout_latest_path.write_text(json.dumps(asdict(report), indent=2), encoding='utf-8')
+        verdict_latest_path.write_text(json.dumps(asdict(verdict), indent=2), encoding='utf-8')
+        signoff_latest_path.write_text(json.dumps(asdict(signoff), indent=2), encoding='utf-8')
+        rollout_report_path.write_text(json.dumps(asdict(report), indent=2), encoding='utf-8')
+        verdict_report_path.write_text(json.dumps({'operator_verdict': asdict(verdict), 'signoff': asdict(signoff)}, indent=2), encoding='utf-8')
+        rollout_metadata_path.write_text(json.dumps(asdict(metadata), indent=2), encoding='utf-8')
+        history_path.write_text(json.dumps(asdict(history), indent=2), encoding='utf-8')
+
+        files_written.extend([
+            str(daily_rollout_latest_path),
+            str(verdict_latest_path),
+            str(signoff_latest_path),
+            str(rollout_report_path),
+            str(verdict_report_path),
+            str(rollout_metadata_path),
+            str(history_path),
+        ])
+        validations.extend([
+            'phase8_required_inputs_present',
+            'phase8_operator_verdict_schema',
+            'phase8_signoff_consistency_schema',
+            'phase8_daily_rollout_schema',
+            'phase8_rollout_history_schema',
+            'phase8_rollout_metadata_schema',
         ])
 
     checksums = {

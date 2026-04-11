@@ -1,4 +1,4 @@
-# Architecture Hardening + Phase 7 Dashboard/Reporting Layer
+# Architecture Hardening + Phase 8 Automated 30-Day Rollout Layer
 
 ## Phase 2 core modules (preserved)
 - `signal_engine.py`: produces bounded signal vector per tradable equity.
@@ -23,6 +23,9 @@
 ## New Phase 7 modules
 - `phase7.py`: consumes validated Phase 3-6 latest outputs and publishes deterministic dashboard-ready snapshot, machine/human daily review summary, structured operator checklist, reporting metadata, and consolidated latest report.
 
+## New Phase 8 modules
+- `phase8.py`: consumes validated Phase 6/7 operational outputs and publishes deterministic daily rollout report, automated operator verdict/sign-off recommendation, and append-safe 30-day rollout history.
+
 ## Boundary rules
 - Governance emits trust and contribution eligibility only.
 - Ranking consumes validated signal + trust once (no double counting).
@@ -32,6 +35,7 @@
 - Phase 5 portfolio construction is downstream-only: it consumes validated upstream outputs and never mutates ranking/governance semantics.
 - Phase 6 operating health is observational and publish-only; it never mutates candidate/ranking/portfolio decisions.
 - Phase 7 reporting is consume-and-summarize only; it never mutates ranking, portfolio construction, risk controls, or monitoring state.
+- Phase 8 rollout automation is consume-and-review only; it never mutates ranking, portfolio, monitoring, or dashboard production logic.
 
 ## End-to-end flow (`run_phase.py --sample-mode`)
 1. Validate universe + quarterly inputs.
@@ -60,6 +64,9 @@
 24. Build Phase 7 daily review summary and severity-ordered operator checklist.
 25. Build reporting metadata + consolidated latest report and publish Phase 7 outputs.
 26. Enrich `runtime/latest/run_manifest.json` with Phase 7 validations/writes.
+27. Build Phase 8 operator verdict + signoff recommendation from validated upstream artifacts.
+28. Build Phase 8 daily rollout report and append/update 30-day rollout history.
+29. Publish Phase 8 latest/quality/learning artifacts and enrich run manifest with Phase 8 validations.
 
 ## Evaluation limitations (explicit by design)
 - This is walk-forward scaffolding, not a full institutional backtester.
@@ -95,9 +102,17 @@
 - `runtime/quality/operator_summary_report.json`: operator-facing daily summary artifact.
 - `runtime/quality/review_checklist_report.json`: structured severity/priority ordered checklist.
 - `runtime/quality/reporting_metadata.json`: reporting lineage, explainability notes, and deterministic metadata.
+- `runtime/latest/daily_rollout_latest.json`: latest daily rollout summary and system classification.
+- `runtime/latest/operator_verdict_latest.json`: machine-readable automated verdict (`approved/caution/reject`).
+- `runtime/latest/signoff_recommendation_latest.json`: operator sign-off recommendation with required checks.
+- `runtime/quality/daily_rollout_report.json`: full daily rollout report payload.
+- `runtime/quality/operator_verdict_report.json`: combined verdict + signoff artifact for audit.
+- `runtime/quality/rollout_metadata.json`: Phase 8 lineage, determinism, and persistence limitations.
+- `runtime/learning/rollout_30_day_history.json`: append-safe rolling 30-day rollout history.
 
 ## Remaining later-phase work
 - richer multi-horizon outcome windows and event-aligned attribution.
 - broader evidence classes and live source adapters.
 - model training/selection pipelines built on Phase 3 learning records.
 - live brokerage execution (intentionally out of scope for this repo phase set).
+- cross-repository/stateful persistence beyond runtime artifacts (outside current repo-native scope).
