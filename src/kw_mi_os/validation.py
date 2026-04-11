@@ -5,8 +5,12 @@ from datetime import date, datetime
 from pathlib import Path
 
 from .models import (
+    BenchmarkResult,
+    CalibratedSignalRecord,
+    CalibrationMetadata,
     CandidateRecord,
     CandidateOutcomeRecord,
+    DecisionQualityReport,
     EvaluationReport,
     EntityType,
     HistoricalSnapshotRecord,
@@ -14,6 +18,7 @@ from .models import (
     ListingStatus,
     QuarterlyRecord,
     RunManifestModel,
+    SignalUsefulnessReport,
     SourceGrowthRecord,
     UniverseRecord,
 )
@@ -191,3 +196,72 @@ def validate_source_growth_record(record: SourceGrowthRecord) -> SourceGrowthRec
     if not record.source_coverage_over_time:
         raise ValueError('source coverage cannot be empty')
     return record
+
+
+def validate_calibrated_signals(
+    records: list[CalibratedSignalRecord],
+    metadata: list[CalibrationMetadata],
+) -> list[CalibratedSignalRecord]:
+    if not metadata:
+        raise ValueError('calibration metadata is required')
+    meta_names = {m.signal_name for m in metadata}
+    for rec in records:
+        if rec.snapshot_id.strip() == '':
+            raise ValueError(f'calibrated signal missing snapshot_id for {rec.symbol}')
+        if set(rec.raw_signals.keys()) != set(rec.calibrated_signals.keys()):
+            raise ValueError(f'raw and calibrated signal keys mismatch for {rec.symbol}')
+        if set(rec.raw_signals.keys()) != meta_names:
+            raise ValueError(f'calibrated signal keys do not match metadata for {rec.symbol}')
+        for name, val in rec.calibrated_signals.items():
+            if not (0.0 <= float(val) <= 1.0):
+                raise ValueError(f'calibrated signal out of bounds: {rec.symbol}.{name}')
+    for m in metadata:
+        if m.sample_size < 0:
+            raise ValueError(f'invalid sample size for {m.signal_name}')
+        if m.bounded_min >= m.bounded_max:
+            raise ValueError(f'invalid calibration bounds for {m.signal_name}')
+    return records
+
+
+def validate_benchmark_results(results: list[BenchmarkResult]) -> list[BenchmarkResult]:
+    for r in results:
+        if r.observed_benchmark_count < 0 or r.observed_candidate_count < 0:
+            raise ValueError(f'negative benchmark counts in {r.benchmark_name}')
+        if r.relative_return_delta is not None:
+            if r.candidate_average_return is None or r.benchmark_average_return is None:
+                raise ValueError(f'invalid delta without averages in {r.benchmark_name}')
+            expected = round(r.candidate_average_return - r.benchmark_average_return, 6)
+            if abs(expected - r.relative_return_delta) > 1e-6:
+                raise ValueError(f'benchmark delta mismatch in {r.benchmark_name}')
+        if r.status not in {'ok', 'insufficient_data'}:
+            raise ValueError(f'invalid benchmark status: {r.status}')
+    return results
+
+
+def validate_decision_quality_report(report: DecisionQualityReport) -> DecisionQualityReport:
+    if not (0.0 <= report.decision_quality_score <= 1.0):
+        raise ValueError('decision_quality_score must be bounded [0,1]')
+    if report.confidence_band not in {'high', 'moderate', 'weak'}:
+        raise ValueError('invalid confidence_band')
+    required_sections = (
+        report.evidence_strength_summary,
+        report.signal_alignment_summary,
+        report.missing_data_risk_summary,
+        report.benchmark_relative_summary,
+    )
+    if any(not section for section in required_sections):
+        raise ValueError('decision quality sections cannot be empty')
+    return report
+
+
+def validate_signal_usefulness_report(report: SignalUsefulnessReport) -> SignalUsefulnessReport:
+    if not report.signal_usefulness:
+        raise ValueError('signal usefulness report cannot be empty')
+    ranking_set = set(report.ranking)
+    if ranking_set != set(report.signal_usefulness.keys()):
+        raise ValueError('signal usefulness ranking mismatch')
+    for signal_name, details in report.signal_usefulness.items():
+        score = float(details.get('usefulness_score', 0.0))
+        if not (0.0 <= score <= 1.0):
+            raise ValueError(f'invalid usefulness score for {signal_name}')
+    return report

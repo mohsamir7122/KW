@@ -22,6 +22,16 @@ from kw_mi_os.historical_snapshot import build_historical_snapshot
 from kw_mi_os.ingestion import default_source_catalog, fetch_json
 from kw_mi_os.learning import build_learning_records, learning_records_to_json
 from kw_mi_os.models import ExclusionRecord, SignalInput, SourceClass, SourceEvidenceRecord
+from kw_mi_os.phase4 import (
+    benchmark_results_to_json,
+    build_benchmark_results,
+    build_calibration_models,
+    build_decision_quality_report,
+    build_signal_usefulness_report,
+    calibration_artifact_to_json,
+    decision_quality_to_json,
+    signal_usefulness_to_json,
+)
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
@@ -31,9 +41,13 @@ from kw_mi_os.validation import (
     validate_candidate_outcomes,
     validate_evaluation_report,
     validate_historical_snapshot,
+    validate_benchmark_results,
+    validate_calibrated_signals,
+    validate_decision_quality_report,
     validate_learning_records,
     validate_manifest,
     validate_quarterly,
+    validate_signal_usefulness_report,
     validate_source_growth_record,
 )
 
@@ -177,6 +191,12 @@ def main() -> int:
         source_growth_path = ROOT / 'runtime' / 'source_growth' / 'source_growth_report.json'
         evaluation_quality_path = ROOT / 'runtime' / 'quality' / 'evaluation_quality_report.json'
         evaluation_latest_path = ROOT / 'runtime' / 'latest' / 'evaluation_latest.json'
+        calibrated_signals_path = ROOT / 'runtime' / 'learning' / 'calibrated_signals.json'
+        signal_usefulness_path = ROOT / 'runtime' / 'learning' / 'signal_usefulness_report.json'
+        benchmark_report_path = ROOT / 'runtime' / 'quality' / 'benchmark_report.json'
+        decision_quality_report_path = ROOT / 'runtime' / 'quality' / 'decision_quality_report.json'
+        benchmark_latest_path = ROOT / 'runtime' / 'latest' / 'benchmark_latest.json'
+        decision_quality_latest_path = ROOT / 'runtime' / 'latest' / 'decision_quality_latest.json'
 
         evaluation_snapshot_path.write_text(json.dumps(asdict(snapshot), indent=2, default=str), encoding='utf-8')
         candidate_outcomes_path.write_text(json.dumps(outcome_records_to_json(outcomes), indent=2), encoding='utf-8')
@@ -185,6 +205,52 @@ def main() -> int:
         evaluation_quality_path.write_text(json.dumps(asdict(evaluation_report), indent=2), encoding='utf-8')
         evaluation_latest_path.write_text(json.dumps(asdict(evaluation_report), indent=2), encoding='utf-8')
 
+        calibrated_signals, calibration_metadata = build_calibration_models(
+            snapshot_id=snapshot.snapshot_id,
+            outcomes=outcomes,
+            learning_records=learning_records,
+            min_samples=2 if mode == 'sample' else 5,
+        )
+        validate_calibrated_signals(calibrated_signals, calibration_metadata)
+
+        signal_usefulness = build_signal_usefulness_report(
+            snapshot_id=snapshot.snapshot_id,
+            learning_records=learning_records,
+            calibration_metadata=calibration_metadata,
+        )
+        validate_signal_usefulness_report(signal_usefulness)
+
+        benchmark_results = build_benchmark_results(
+            candidates=candidates,
+            outcomes=outcomes,
+            calibrated_records=calibrated_signals,
+        )
+        validate_benchmark_results(benchmark_results)
+
+        decision_quality = build_decision_quality_report(
+            snapshot_id=snapshot.snapshot_id,
+            candidates=candidates,
+            explanations_by_symbol=explanations_by_symbol,
+            calibration_metadata=calibration_metadata,
+            benchmark_results=benchmark_results,
+            evaluation_report=evaluation_report,
+            calibrated_records=calibrated_signals,
+        )
+        validate_decision_quality_report(decision_quality)
+
+        calibrated_signals_path.write_text(
+            json.dumps(calibration_artifact_to_json(calibrated_signals, calibration_metadata), indent=2),
+            encoding='utf-8',
+        )
+        signal_usefulness_path.write_text(json.dumps(signal_usefulness_to_json(signal_usefulness), indent=2), encoding='utf-8')
+        benchmark_report_path.write_text(json.dumps(benchmark_results_to_json(benchmark_results), indent=2), encoding='utf-8')
+        decision_quality_report_path.write_text(json.dumps(decision_quality_to_json(decision_quality), indent=2), encoding='utf-8')
+        benchmark_latest_path.write_text(benchmark_report_path.read_text(encoding='utf-8'), encoding='utf-8')
+        decision_quality_latest_path.write_text(
+            decision_quality_report_path.read_text(encoding='utf-8'),
+            encoding='utf-8',
+        )
+
         files_written.extend([
             str(evaluation_snapshot_path),
             str(candidate_outcomes_path),
@@ -192,6 +258,12 @@ def main() -> int:
             str(source_growth_path),
             str(evaluation_quality_path),
             str(evaluation_latest_path),
+            str(calibrated_signals_path),
+            str(signal_usefulness_path),
+            str(benchmark_report_path),
+            str(decision_quality_report_path),
+            str(benchmark_latest_path),
+            str(decision_quality_latest_path),
         ])
         validations.extend([
             'historical_snapshot_schema',
@@ -199,6 +271,14 @@ def main() -> int:
             'evaluation_report_schema',
             'learning_schema',
             'source_growth_schema',
+            'calibrated_signal_schema',
+            'calibration_metadata_schema',
+            'benchmark_result_schema',
+            'decision_quality_schema',
+            'signal_usefulness_schema',
+            'benchmark_artifact_integrity',
+            'historical_window_integrity',
+            'entity_join_integrity',
         ])
 
     checksums = {
