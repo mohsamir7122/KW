@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+
+# Runtime outputs (structure-only tracked with .gitkeep)
+runtime/latest/*
+runtime/learning/*
+runtime/quality/*
+runtime/source_growth/*
+runtime/candidates/*
+!runtime/**/.gitkeep
+
+# OS/editor
+.DS_Store
+*.swp
+*.tmp
