@@ -5,6 +5,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from .models import (
+    AlertRecord,
     BenchmarkResult,
     CalibratedSignalRecord,
     CalibrationMetadata,
@@ -13,6 +14,10 @@ from .models import (
     DecisionQualityReport,
     EvaluationReport,
     EntityType,
+    PortfolioProposal,
+    PortfolioSnapshot,
+    RebalanceAction,
+    RiskControlResult,
     HistoricalSnapshotRecord,
     LearningRecord,
     ListingStatus,
@@ -231,3 +236,66 @@ def validate_decision_quality_report(report: DecisionQualityReport) -> DecisionQ
     if not (0.0 <= report.decision_quality_score <= 1.0):
         raise ValueError('decision quality score out of bounds')
     return report
+
+
+def validate_portfolio_proposal(proposal: PortfolioProposal) -> PortfolioProposal:
+    if not proposal.proposal_id:
+        raise ValueError('portfolio proposal id is required')
+    running = 0.0
+    for p in proposal.positions:
+        if not (0.0 <= p.target_weight <= 1.0):
+            raise ValueError(f'target weight out of bounds for {p.symbol}')
+        if not p.tradable:
+            raise ValueError(f'non-tradable entity in portfolio proposal: {p.symbol}')
+        running += p.target_weight
+    if abs(round(running, 6) - proposal.total_target_weight) > 1e-6:
+        raise ValueError('portfolio proposal total_target_weight mismatch')
+    return proposal
+
+
+def validate_risk_control_result(result: RiskControlResult) -> RiskControlResult:
+    if not result.controls:
+        raise ValueError('risk control result must include controls')
+    for control in result.controls:
+        if control.status not in {'pass', 'adjusted', 'fail', 'limitation'}:
+            raise ValueError(f'invalid control status: {control.status}')
+    for p in result.adjusted_positions:
+        if not p.tradable:
+            raise ValueError(f'non-tradable entity after risk controls: {p.symbol}')
+    return result
+
+
+def validate_portfolio_snapshot_compatibility(
+    prior_snapshot: PortfolioSnapshot | None,
+    latest_snapshot: PortfolioSnapshot,
+) -> PortfolioSnapshot:
+    if prior_snapshot is None:
+        return latest_snapshot
+    prior_symbols = {str(p['symbol']) for p in prior_snapshot.positions}
+    latest_symbols = {str(p['symbol']) for p in latest_snapshot.positions}
+    for symbol in prior_symbols & latest_symbols:
+        prior_id = str(next(p['canonical_entity_id'] for p in prior_snapshot.positions if p['symbol'] == symbol))
+        latest_id = str(next(p['canonical_entity_id'] for p in latest_snapshot.positions if p['symbol'] == symbol))
+        if prior_id != latest_id:
+            raise ValueError(f'invalid entity join in portfolio snapshots for {symbol}')
+    return latest_snapshot
+
+
+def validate_rebalance_actions(actions: list[RebalanceAction]) -> list[RebalanceAction]:
+    valid_actions = {'add', 'increase', 'decrease', 'hold', 'remove'}
+    for action in actions:
+        if action.action not in valid_actions:
+            raise ValueError(f'invalid rebalance action {action.action} for {action.symbol}')
+        if round(action.target_weight - action.prior_weight, 6) != action.delta_weight:
+            raise ValueError(f'rebalance delta mismatch for {action.symbol}')
+    return actions
+
+
+def validate_alert_records(alerts: list[AlertRecord]) -> list[AlertRecord]:
+    valid_severity = {'info', 'warning', 'critical'}
+    for alert in alerts:
+        if alert.severity not in valid_severity:
+            raise ValueError(f'invalid alert severity: {alert.severity}')
+        if not alert.alert_type:
+            raise ValueError('alert_type is required')
+    return alerts

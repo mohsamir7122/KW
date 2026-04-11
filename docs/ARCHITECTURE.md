@@ -1,4 +1,4 @@
-# Architecture Hardening + Phase 4 Decision-Quality Layer
+# Architecture Hardening + Phase 5 Portfolio/Risk/Alerting Layer
 
 ## Phase 2 core modules (preserved)
 - `signal_engine.py`: produces bounded signal vector per tradable equity.
@@ -14,12 +14,16 @@
 ## New Phase 4 modules
 - `phase4.py`: provides bounded calibration, benchmarking, signal usefulness scoring, and decision-quality reporting with confidence bands.
 
+## New Phase 5 modules
+- `phase5.py`: builds deterministic portfolio proposals from validated candidates + calibrated outputs, applies explicit risk controls, plans rebalance actions, and emits structured alerts.
+
 ## Boundary rules
 - Governance emits trust and contribution eligibility only.
 - Ranking consumes validated signal + trust once (no double counting).
 - Evaluation uses validated historical snapshots only (no ad hoc joins).
 - Learning and source growth outputs are observational artifacts only (no direct ranking feedback in this phase).
 - Phase 4 calibration is bounded and explicitly sparse-data limited; it never bypasses governance/ranking boundaries.
+- Phase 5 portfolio construction is downstream-only: it consumes validated upstream outputs and never mutates ranking/governance semantics.
 
 ## End-to-end flow (`run_phase.py --sample-mode`)
 1. Validate universe + quarterly inputs.
@@ -37,6 +41,11 @@
 13. Build signal usefulness report from observed outcomes.
 14. Build decision-quality report with confidence bands and interpretable summary.
 15. Enrich `runtime/latest/run_manifest.json` with Phase 4 validations/writes.
+16. Build portfolio proposal with explainable inclusion/exclusion reasons.
+17. Apply explicit auditable risk controls (weights, liquidity, decision quality, tradability, turnover, cash buffer).
+18. Build rebalance plan versus latest prior snapshot with canonical fail-closed joins.
+19. Generate structured alerts and operational summary artifacts.
+20. Enrich `runtime/latest/run_manifest.json` with Phase 5 validations/writes.
 
 ## Evaluation limitations (explicit by design)
 - This is walk-forward scaffolding, not a full institutional backtester.
@@ -51,8 +60,16 @@
 - `runtime/quality/benchmark_report.json`: benchmark comparison artifact.
 - `runtime/quality/decision_quality_report.json`: decision-quality score/report.
 - `runtime/latest/benchmark_latest.json` and `runtime/latest/decision_quality_latest.json`: latest snapshots for Phase 4 quality outputs.
+- `runtime/latest/portfolio_latest.json`: risk-adjusted portfolio snapshot.
+- `runtime/latest/rebalance_latest.json`: machine-readable rebalance actions (`add/increase/decrease/hold/remove`).
+- `runtime/latest/alerts_latest.json`: latest structured alerts with severity.
+- `runtime/quality/portfolio_quality_report.json`: portfolio quality score and bucket (`high/moderate/weak`).
+- `runtime/quality/risk_control_report.json`: full auditable risk-control result with bindings/limitations.
+- `runtime/quality/alert_report.json`: summarized alert report.
+- `runtime/learning/portfolio_decision_history.json`: rolling portfolio decision history for learning/audit.
 
 ## Remaining later-phase work
 - richer multi-horizon outcome windows and event-aligned attribution.
 - broader evidence classes and live source adapters.
 - model training/selection pipelines built on Phase 3 learning records.
+- live brokerage execution (intentionally out of scope for Phase 5).
