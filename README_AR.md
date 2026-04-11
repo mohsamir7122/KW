@@ -2,7 +2,7 @@
 
 نظام استخبارات سوق الكويت مبني بنهج **candidate-selection** وليس تنفيذ لحظي.
 
-## Architecture Overview (Phase 5)
+## Architecture Overview (Phase 6)
 - `signal_engine.py`: حساب الإشارات الأساسية (trend, quality, liquidity, value, event, coverage) مع حدود واضحة وmissing-data penalty.
 - `evidence_normalization.py`: تحويل الأدلة الخام إلى سجلات typed + quarantine للكيانات غير القابلة للتداول/السياقية.
 - `candidate_assembly.py`: دمج universe + signals + governance + evidence وإنتاج candidates/exclusions/explanations/quality report.
@@ -12,8 +12,9 @@
 - `source_growth.py`: تتبع نمو/تغطية المصادر ومشاركتها وقبولها/رفضها بشكل observational فقط.
 - `phase4.py`: معايرة bounded للإشارات مع فصل واضح بين raw/calibrated، مقارنة benchmark بسيطة وقابلة للتدقيق، وتقرير decision quality مع confidence bands.
 - `phase5.py`: بناء محفظة من المرشحين المعتمدين، تطبيق ضوابط مخاطر قابلة للتدقيق، إنشاء خطة rebalance، وإنتاج تنبيهات تشغيلية structured.
+- `phase6.py`: طبقة تشغيل إنتاجية لجدولة runs (scheduled/ad-hoc)، مراقبة health/freshness، تصنيف failure/degraded، ونشر تقارير تشغيل machine-readable.
 
-## Runtime artifacts (Phase 5)
+## Runtime artifacts (Phase 6)
 ### Publishing + Quality
 - `runtime/candidates/candidates.json`
 - `runtime/quality/exclusions.json`
@@ -28,6 +29,9 @@
 - `runtime/latest/rebalance_latest.json`
 - `runtime/latest/alerts_latest.json`
 - `runtime/latest/run_manifest.json`
+- `runtime/latest/operating_status_latest.json`
+- `runtime/latest/health_status_latest.json`
+- `runtime/latest/scheduler_status_latest.json`
 
 ### Learning scope (`runtime/learning`)
 - `evaluation_snapshot.json`: لقطة تاريخية صالحة للتقييم.
@@ -46,15 +50,25 @@
 - `runtime/quality/portfolio_quality_report.json`
 - `runtime/quality/risk_control_report.json`
 - `runtime/quality/alert_report.json`
+- `runtime/quality/operating_status_report.json`
+- `runtime/quality/health_report.json`
+- `runtime/quality/failure_report.json`
+- `runtime/quality/freshness_report.json`
 - `runtime/latest/benchmark_latest.json`
 - `runtime/latest/decision_quality_latest.json`
 
-## فلسفة Phase 5 وحدودها
+### Operating loop additions (`runtime/learning`)
+- `runtime/learning/operating_run_history.json`: سجل تشغيلات Phase 6 مع حالة كل run (healthy/degraded/failed).
+
+## فلسفة Phase 6 وحدودها
 - **Portfolio construction** يستهلك مخرجات validated من المراحل السابقة فقط؛ لا يعيد كتابة ranking ولا governance.
 - **Risk controls** صريحة وقابلة للتدقيق: max weight, active positions, liquidity, decision-quality, tradability, turnover cap, وcash buffer.
 - **Rebalance semantics**: أفعال `add/increase/decrease/hold/remove` مع `delta_weight` ورفض fail-closed لأي canonical join غير صالح.
 - **Alerting semantics**: تنبيهات structured مع severity (`info/warning/critical`) مبنية على التقارير والقيود الفعلية.
 - **Limitations**: لا يوجد تنفيذ وسيط حي في هذه المرحلة؛ live mode يعرض fallback واضح عند نقص المدخلات التشغيلية.
+- **Scheduling philosophy**: النظام يجهّز scheduler state وقيم `next_planned_run` و`run_trigger_reason` لكنه لا ينشئ cron/cloud infra في هذه المرحلة.
+- **Health semantics**: الحالة النهائية واحدة من `healthy/degraded/failed` مع فصل صريح بين warning conditions وcritical failures.
+- **Freshness semantics**: فحوصات freshness/staleness تُطبَّق على artifacts التشغيلية الحرجة وتُصدر تقارير واضحة للمشغل.
 
 ## التشغيل المحلي
 ```bash
@@ -65,7 +79,16 @@ python scripts/type_check.py
 pytest -q
 ```
 
-## ملاحظات Phase 5
+### تشغيل Phase 6 في sample mode
+```bash
+python scripts/run_phase.py --sample-mode --phase phase6
+```
+أو تشغيل كامل pipeline مع Phase 6:
+```bash
+python scripts/run_phase.py --sample-mode --phase all
+```
+
+## ملاحظات Phase 6
 - المعايرة bounded ومقيّدة عند sparse data (shrinkage + limitations واضحة).
 - benchmark الحالي بسيط auditable baseline (صِفر عائد) ومناسب للحوكمة.
 - decision quality يقدّم score تفسيري مع confidence bands وحدود الاستخدام.
@@ -73,4 +96,4 @@ pytest -q
 - عند نقص البيانات، تظهر limitations بشكل structured داخل evaluation report.
 - sample mode deterministic.
 - live mode متاح مع fallback واضح، وقد يستخدم outcome feed محدود حسب البيئة.
-- لاحقًا: تنفيذ تداول حي، تحسين optimizer متعدد القيود، وتقييم multi-horizon أوسع.
+- لاحقًا: تنفيذ تداول حي، cron/cloud orchestration فعلية، تحسين optimizer متعدد القيود، وتقييم multi-horizon أوسع.

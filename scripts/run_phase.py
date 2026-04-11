@@ -30,6 +30,7 @@ from kw_mi_os.phase4 import (
     calibrate_signals,
 )
 from kw_mi_os.phase5 import apply_risk_controls, alerts_to_json, build_alerts, construct_portfolio_proposal, plan_rebalance
+from kw_mi_os.phase6 import build_phase6_status, to_json
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
@@ -51,6 +52,12 @@ from kw_mi_os.validation import (
     validate_quarterly,
     validate_rebalance_actions,
     validate_risk_control_result,
+    validate_failure_records,
+    validate_freshness_checks,
+    validate_health_status_report,
+    validate_operating_run_record,
+    validate_operating_status_snapshot,
+    validate_scheduler_status,
     validate_source_growth_record,
     validate_signal_usefulness_report,
 )
@@ -77,7 +84,7 @@ def _load_prior_snapshot(path: Path) -> PortfolioSnapshot | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
@@ -160,6 +167,9 @@ def main() -> int:
         'signal_bounds',
         'evidence_normalization',
     ]
+    warnings: list[str] = [] if mode == 'sample' else ['live_mode_selected_manual_review_required', 'phase3_live_uses_limited_outcome_feed']
+    if mode == 'live' and args.phase in {'all', 'phase5', 'phase6'}:
+        warnings.append('phase5_live_requires_external_portfolio_execution_inputs_fallback_only')
 
     phase3_outcomes = []
     phase3_snapshot_id = 'kw_phase3_sample_2026q1'
@@ -366,14 +376,79 @@ def main() -> int:
             'phase5_snapshot_compatibility',
         ])
 
+    if args.phase in {'all', 'phase6'}:
+        preview_run_id = 'sample_phase6_manifest' if mode == 'sample' else 'live_phase6_manifest'
+        preview_created = '2026-04-11T00:00:00+00:00'
+        run_record, scheduler_status, health, operating_snapshot, failures, freshness_checks = build_phase6_status(
+            root=ROOT,
+            mode=mode,
+            phase=args.phase,
+            internet_status=internet_status,
+            validations=validations,
+            warnings=warnings,
+            manifest_run_id=preview_run_id,
+            manifest_created_at=preview_created,
+        )
+        validate_operating_run_record(run_record)
+        validate_scheduler_status(scheduler_status)
+        validate_freshness_checks(freshness_checks)
+        validate_failure_records(failures)
+        validate_health_status_report(health)
+        validate_operating_status_snapshot(operating_snapshot)
+
+        operating_latest_path = ROOT / 'runtime' / 'latest' / 'operating_status_latest.json'
+        health_latest_path = ROOT / 'runtime' / 'latest' / 'health_status_latest.json'
+        scheduler_latest_path = ROOT / 'runtime' / 'latest' / 'scheduler_status_latest.json'
+        operating_quality_path = ROOT / 'runtime' / 'quality' / 'operating_status_report.json'
+        health_quality_path = ROOT / 'runtime' / 'quality' / 'health_report.json'
+        failure_quality_path = ROOT / 'runtime' / 'quality' / 'failure_report.json'
+        freshness_quality_path = ROOT / 'runtime' / 'quality' / 'freshness_report.json'
+        operating_history_path = ROOT / 'runtime' / 'learning' / 'operating_run_history.json'
+
+        operating_latest_path.write_text(json.dumps(to_json(operating_snapshot), indent=2), encoding='utf-8')
+        health_latest_path.write_text(json.dumps(to_json(health), indent=2), encoding='utf-8')
+        scheduler_latest_path.write_text(json.dumps(to_json(scheduler_status), indent=2), encoding='utf-8')
+        operating_quality_path.write_text(json.dumps(to_json(operating_snapshot), indent=2), encoding='utf-8')
+        health_quality_path.write_text(json.dumps(to_json(health), indent=2), encoding='utf-8')
+        failure_quality_path.write_text(json.dumps({'failures': [to_json(f) for f in failures]}, indent=2), encoding='utf-8')
+        freshness_quality_path.write_text(json.dumps({'checks': [to_json(c) for c in freshness_checks]}, indent=2), encoding='utf-8')
+
+        history: list[dict[str, object]] = []
+        if operating_history_path.exists():
+            history = list(json.loads(operating_history_path.read_text(encoding='utf-8')))
+        history.append(
+            {
+                'run_id': run_record.run_id,
+                'mode': run_record.mode,
+                'trigger_reason': run_record.trigger_reason,
+                'status': run_record.status,
+                'completed_at_utc': run_record.completed_at_utc,
+            }
+        )
+        operating_history_path.write_text(json.dumps(history[-50:], indent=2), encoding='utf-8')
+
+        files_written.extend([
+            str(operating_latest_path),
+            str(health_latest_path),
+            str(scheduler_latest_path),
+            str(operating_quality_path),
+            str(health_quality_path),
+            str(failure_quality_path),
+            str(freshness_quality_path),
+            str(operating_history_path),
+        ])
+        validations.extend([
+            'phase6_scheduler_status_schema',
+            'phase6_freshness_schema',
+            'phase6_failure_schema',
+            'phase6_health_schema',
+            'phase6_operating_status_schema',
+        ])
+
     checksums = {
         'config/kuwait_equities_master.csv': sha256_of_text(universe_file.read_text(encoding='utf-8')),
         'data/quarterly_history.csv': sha256_of_text(quarterly_file.read_text(encoding='utf-8')),
     }
-
-    warnings: list[str] = [] if mode == 'sample' else ['live_mode_selected_manual_review_required', 'phase3_live_uses_limited_outcome_feed']
-    if mode == 'live' and args.phase in {'all', 'phase5'}:
-        warnings.append('phase5_live_requires_external_portfolio_execution_inputs_fallback_only')
 
     manifest = RunManifest(
         mode=mode,

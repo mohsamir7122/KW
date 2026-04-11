@@ -22,6 +22,10 @@ from kw_mi_os.models import (
     CalibratedSignalRecord,
     CandidateRecord,
     DecisionQualityReport,
+    FailureRecord,
+    FreshnessCheck,
+    HealthStatusReport,
+    PhaseCompletionRecord,
     PortfolioProposal,
     PortfolioQualityReport,
     PortfolioSnapshot,
@@ -39,6 +43,7 @@ from kw_mi_os.phase4 import (
     calibrate_signals,
 )
 from kw_mi_os.phase5 import apply_risk_controls, build_alerts, construct_portfolio_proposal, plan_rebalance
+from kw_mi_os.phase6 import build_phase6_status
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.ranking import rank_candidates
 from kw_mi_os.signal_engine import compute_signals
@@ -51,6 +56,9 @@ from kw_mi_os.validation import (
     validate_calibration_metadata,
     validate_decision_quality_report,
     validate_evaluation_report,
+    validate_failure_records,
+    validate_freshness_checks,
+    validate_health_status_report,
     validate_historical_snapshot,
     validate_learning_records,
     validate_manifest,
@@ -59,6 +67,9 @@ from kw_mi_os.validation import (
     validate_quarterly,
     validate_rebalance_actions,
     validate_risk_control_result,
+    validate_operating_run_record,
+    validate_operating_status_snapshot,
+    validate_scheduler_status,
     validate_source_growth_record,
     validate_signal_usefulness_report,
     validate_alert_records,
@@ -112,11 +123,12 @@ def test_ranking_no_double_counting_of_trust():
 
 
 def test_phase_contracts_defined_and_idempotent():
-    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5'}
+    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6'}
     assert all(v.idempotent for v in PHASE_CONTRACTS.values())
     assert PHASE_CONTRACTS['phase3'].outputs
     assert PHASE_CONTRACTS['phase4'].outputs
     assert PHASE_CONTRACTS['phase5'].outputs
+    assert PHASE_CONTRACTS['phase6'].outputs
 
 
 def test_historical_snapshot_validation_and_point_in_time_behavior():
@@ -230,6 +242,14 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
         ROOT / 'runtime/quality/risk_control_report.json',
         ROOT / 'runtime/quality/alert_report.json',
         ROOT / 'runtime/learning/portfolio_decision_history.json',
+        ROOT / 'runtime/latest/operating_status_latest.json',
+        ROOT / 'runtime/latest/health_status_latest.json',
+        ROOT / 'runtime/latest/scheduler_status_latest.json',
+        ROOT / 'runtime/quality/operating_status_report.json',
+        ROOT / 'runtime/quality/health_report.json',
+        ROOT / 'runtime/quality/failure_report.json',
+        ROOT / 'runtime/quality/freshness_report.json',
+        ROOT / 'runtime/learning/operating_run_history.json',
         ROOT / 'runtime/latest/run_manifest.json',
     ]
     for p in required:
@@ -240,6 +260,7 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
     assert 'historical_snapshot_schema' in manifest['validations']
     assert 'phase4_decision_quality_schema' in manifest['validations']
     assert 'phase5_alert_schema' in manifest['validations']
+    assert 'phase6_operating_status_schema' in manifest['validations']
 
 
 def test_phase4_outputs_validate_from_sample_outcomes():
@@ -303,6 +324,60 @@ def test_deterministic_sample_mode_outputs():
     subprocess.check_call(['python', 'scripts/run_phase.py', '--sample-mode'])
     second = (ROOT / 'runtime/latest/evaluation_latest.json').read_text(encoding='utf-8')
     assert first == second
+
+
+def test_phase6_scheduler_health_and_failure_schema():
+    subprocess.check_call(['python', 'scripts/run_phase.py', '--sample-mode'])
+    run_record, scheduler, health, snapshot, failures, freshness_checks = build_phase6_status(
+        root=ROOT,
+        mode='sample',
+        phase='all',
+        internet_status='ok',
+        validations=['phase5_alert_schema'],
+        warnings=[],
+        manifest_run_id='sample_phase6_manifest',
+        manifest_created_at='2026-04-11T00:00:00+00:00',
+    )
+    validate_operating_run_record(run_record)
+    validate_scheduler_status(scheduler)
+    validate_freshness_checks(freshness_checks)
+    validate_failure_records(failures)
+    validate_health_status_report(health)
+    validate_operating_status_snapshot(snapshot)
+    assert scheduler.deterministic_sample_mode is True
+
+
+def test_phase6_rejects_contradictory_health_state():
+    subprocess.check_call(['python', 'scripts/run_phase.py', '--sample-mode'])
+    health_data = json.loads((ROOT / 'runtime/latest/health_status_latest.json').read_text(encoding='utf-8'))
+    health_data['healthy'] = True
+    health_data['failures'] = [{
+        'failure_class': 'missing_required_artifact',
+        'severity': 'critical',
+        'artifact': 'runtime/latest/portfolio_latest.json',
+        'message': 'broken',
+        'operator_action': 'fix',
+    }]
+
+    report = HealthStatusReport(
+        overall_status=str(health_data['overall_status']),
+        healthy=bool(health_data['healthy']),
+        degraded=bool(health_data['degraded']),
+        failed=bool(health_data['failed']),
+        degraded_mode=bool(health_data['degraded_mode']),
+        input_freshness_status=str(health_data['input_freshness_status']),
+        artifact_presence_status=str(health_data['artifact_presence_status']),
+        validation_status=str(health_data['validation_status']),
+        phase_completion_status=str(health_data['phase_completion_status']),
+        internet_status=str(health_data['internet_status']),
+        portfolio_output_status=str(health_data['portfolio_output_status']),
+        alert_summary=dict(health_data['alert_summary']),
+        checks=[FreshnessCheck(**c) for c in health_data['checks']],
+        failures=[FailureRecord(**f) for f in health_data['failures']],
+        phase_completion=[PhaseCompletionRecord(**p) for p in health_data['phase_completion']],
+    )
+    with pytest.raises(ValueError):
+        validate_health_status_report(report)
 
 
 def test_phase5_portfolio_and_risk_controls_non_tradable_rejection():
