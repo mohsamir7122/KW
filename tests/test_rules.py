@@ -39,6 +39,7 @@ from kw_mi_os.phase4 import (
     calibrate_signals,
 )
 from kw_mi_os.phase5 import apply_risk_controls, build_alerts, construct_portfolio_proposal, plan_rebalance
+from kw_mi_os.phase6 import build_health_status_report
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.ranking import rank_candidates
 from kw_mi_os.signal_engine import compute_signals
@@ -62,7 +63,14 @@ from kw_mi_os.validation import (
     validate_source_growth_record,
     validate_signal_usefulness_report,
     validate_alert_records,
+    validate_failure_records,
+    validate_freshness_checks,
+    validate_health_status_report,
     validate_universe,
+    validate_operating_run_record,
+    validate_operating_status_snapshot,
+    validate_phase_completion,
+    validate_scheduler_status,
 )
 
 
@@ -112,11 +120,12 @@ def test_ranking_no_double_counting_of_trust():
 
 
 def test_phase_contracts_defined_and_idempotent():
-    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5'}
+    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6'}
     assert all(v.idempotent for v in PHASE_CONTRACTS.values())
     assert PHASE_CONTRACTS['phase3'].outputs
     assert PHASE_CONTRACTS['phase4'].outputs
     assert PHASE_CONTRACTS['phase5'].outputs
+    assert PHASE_CONTRACTS['phase6'].outputs
 
 
 def test_historical_snapshot_validation_and_point_in_time_behavior():
@@ -230,6 +239,14 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
         ROOT / 'runtime/quality/risk_control_report.json',
         ROOT / 'runtime/quality/alert_report.json',
         ROOT / 'runtime/learning/portfolio_decision_history.json',
+        ROOT / 'runtime/latest/operating_status_latest.json',
+        ROOT / 'runtime/latest/health_status_latest.json',
+        ROOT / 'runtime/latest/scheduler_status_latest.json',
+        ROOT / 'runtime/quality/operating_status_report.json',
+        ROOT / 'runtime/quality/health_report.json',
+        ROOT / 'runtime/quality/failure_report.json',
+        ROOT / 'runtime/quality/freshness_report.json',
+        ROOT / 'runtime/learning/operating_run_history.json',
         ROOT / 'runtime/latest/run_manifest.json',
     ]
     for p in required:
@@ -240,6 +257,7 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
     assert 'historical_snapshot_schema' in manifest['validations']
     assert 'phase4_decision_quality_schema' in manifest['validations']
     assert 'phase5_alert_schema' in manifest['validations']
+    assert 'phase6_operating_status_schema' in manifest['validations']
 
 
 def test_phase4_outputs_validate_from_sample_outcomes():
@@ -413,3 +431,21 @@ def test_phase5_rebalance_join_fail_closed_and_alert_structure():
     )
     validate_alert_records(alerts)
     assert {a.severity for a in alerts}.issubset({'info', 'warning', 'critical'})
+
+
+def test_phase6_health_monitoring_and_status_publication():
+    run_record, scheduler, health_report, status_snapshot, failures = build_health_status_report(
+        run_id='phase6_test_run',
+        mode='sample',
+        run_outcome='success',
+        failures=[],
+    )
+    validate_operating_run_record(run_record)
+    validate_scheduler_status(scheduler)
+    validate_freshness_checks(health_report.freshness_checks)
+    validate_failure_records(failures)
+    validate_phase_completion(health_report.phase_completion)
+    validate_health_status_report(health_report)
+    validate_operating_status_snapshot(status_snapshot)
+    assert scheduler.deterministic_sample_mode is True
+    assert status_snapshot.operating_status == 'healthy'
