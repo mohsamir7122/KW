@@ -1,0 +1,56 @@
+source_id,category,priority,status,url,notes
+boursa_home,official_market,1,official_verified,https://www.boursakuwait.com.kw/en/,Boursa Kuwait home
+boursa_disclosures,official_market,1,official_verified,https://www.boursakuwait.com.kw/en/announcements/news-and-announcements/announcements/,current announcements
+boursa_historical_disclosures,official_market,1,official_verified,https://www.boursakuwait.com.kw/en/announcements/disclosures-and-announcements/historical-disclosures-and-announcements,historical disclosures
+boursa_corporate_event_calendar,official_market,1,official_verified,https://www.boursakuwait.com.kw/en/corporate-event-calendar/,corporate events
+boursa_investor_relations_calendar,official_market,1,official_verified,https://www.boursakuwait.com.kw/en/investor-relations-calendar,IR calendar
+boursa_market_watch,official_market,1,official_verified,https://www.boursakuwait.com.kw/en/securities/prices-and-screens/market-watch,delayed market watch
+boursa_market_summary_reports,official_market,1,official_verified,https://www.boursakuwait.com.kw/en/securities/prices-and-screens/market-summary-reports,market summary reports
+boursa_financial_reports,official_market,1,official_verified,https://www.boursakuwait.com.kw/en/securities/financial-reports,financial reports
+boursa_listed_companies,official_market,1,official_verified,https://www.boursakuwait.com.kw/en/securities/listed-companies,listed companies
+boursa_indices,official_market,1,official_verified,https://www.boursakuwait.com.kw/en/market/indices,indices
+cma_home,regulatory_legal,1,official_verified,https://www.cma.gov.kw/en/web/cma/,CMA home
+cma_announcements,regulatory_legal,1,official_verified,https://www.cma.gov.kw/en/web/cma/cma-board-releases/announcements-and-circulars,announcements
+cma_media,regulatory_legal,1,official_verified,https://www.cma.gov.kw/en/web/cma/media-center,media center
+cbk_home,macro_local,1,official_verified,https://www.cbk.gov.kw/en/,CBK home
+cbk_exchange_rates,macro_local,1,official_verified,https://www.cbk.gov.kw/en/monetary-policy/market-operations/exchange-rates,exchange rates
+cbk_gcc_rates,macro_local,1,official_verified,https://www.cbk.gov.kw/en/monetary-policy/market-operations/gcc-exchange-rates,gcc rates
+cbk_publications,macro_local,2,official_verified,https://www.cbk.gov.kw/en/publications,publications
+kuna_home,official_news,1,official_verified,https://www.kuna.net.kw/Home.aspx?Language=en,KUNA home
+kuna_business,official_news,2,source_verified,https://www.kuna.net.kw/Category.aspx?language=en&id=2,business/economy
+kcc_home,market_infrastructure,1,official_verified,https://maqasa.com/en/,KCC home
+kcc_about,market_infrastructure,1,official_verified,https://maqasa.com/en/about-kcc/,about KCC
+kcc_services,market_infrastructure,2,source_verified,https://maqasa.com/en/services/,services
+kpc_home,macro_local,2,source_verified,https://www.kpc.com.kw/,KPC home
+eia_home,macro_global,4,source_verified,https://www.eia.gov/,EIA home
+eia_petroleum,macro_global,4,source_verified,https://www.eia.gov/petroleum/,petroleum
+reuters_markets,market_assist,4,source_verified,https://www.reuters.com/markets/,Reuters markets
+reuters_middle_east,market_assist,4,source_verified,https://www.reuters.com/world/middle-east/,Middle East
+investing_kuwait,market_assist,5,source_verified,https://www.investing.com/equities/kuwait,Investing Kuwait
+investing_52w_high,market_assist,5,source_verified,https://www.investing.com/equities/kuwait/52-week-high,52w high
+investing_52w_low,market_assist,5,source_verified,https://www.investing.com/equities/kuwait/52-week-low,52w low
+mubasher_kw,market_assist,5,source_verified,https://www.mubasher.info/countries/kw,Mubasher Kuwait
+argaam_en,market_assist,5,source_verified,https://www.argaam.com/en,Argaam English
+yahoo_finance,market_assist,5,source_verified,https://finance.yahoo.com/,Yahoo Finance
+zawya_markets,market_assist,5,source_verified,https://www.zawya.com/en/markets/,Zawya
+alqabas,newspapers_kw,4,source_verified,https://www.alqabas.com/,Al Qabas
+aljarida,newspapers_kw,4,source_verified,https://www.aljarida.com/,Al Jarida
+alanba,newspapers_kw,4,source_verified,https://www.alanba.com.kw/,Al Anba
+kuwait_times_business,newspapers_kw,4,source_verified,https://www.kuwaittimes.com/business/,Kuwait Times business
+arab_news_business,market_assist,5,source_verified,https://www.arabnews.com/business-economy,Arab News business
+meed,market_assist,5,source_verified,https://www.meed.com/,MEED
+issuer_ir_slot_01,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_02,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_03,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_04,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_05,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_06,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_07,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_08,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_09,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_10,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_11,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_12,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_13,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_14,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
+issuer_ir_slot_15,company_ir,2,discover_from_universe,DISCOVER_FROM_MASTER,discover company IR from universe master
