@@ -242,3 +242,57 @@ class SourceGrowthRecord:
     source_participation_in_candidates: dict[str, int]
     source_acceptance_rejection_counts: dict[str, dict[str, int]]
     source_contribution_eligibility_summary: dict[str, float]
+
+
+@dataclass(frozen=True)
+class CalibrationMetadata:
+    signal_name: str
+    sample_size: int
+    method: str
+    slope: float
+    intercept: float
+    bounded_min: float
+    bounded_max: float
+    sparse_data: bool
+    limitations: list[str]
+
+
+@dataclass(frozen=True)
+class CalibratedSignalRecord:
+    symbol: str
+    snapshot_id: str
+    raw_signals: dict[str, float]
+    calibrated_signals: dict[str, float]
+    calibration_version: str
+
+
+@dataclass(frozen=True)
+class BenchmarkResult:
+    benchmark_name: str
+    candidate_average_return: float | None
+    benchmark_average_return: float | None
+    relative_return_delta: float | None
+    observed_candidate_count: int
+    observed_benchmark_count: int
+    status: str
+    limitations: list[str]
+
+
+@dataclass(frozen=True)
+class SignalUsefulnessReport:
+    snapshot_id: str
+    signal_usefulness: dict[str, dict[str, float | int | str | bool]]
+    ranking: list[str]
+    limitations: list[str]
+
+
+@dataclass(frozen=True)
+class DecisionQualityReport:
+    snapshot_id: str
+    decision_quality_score: float
+    confidence_band: str
+    evidence_strength_summary: dict[str, float | int | str]
+    signal_alignment_summary: dict[str, float | str]
+    missing_data_risk_summary: dict[str, float | str]
+    benchmark_relative_summary: dict[str, float | str]
+    limitations: list[str]
