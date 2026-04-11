@@ -17,13 +17,28 @@ from kw_mi_os.governance import governance_outputs
 from kw_mi_os.historical_snapshot import build_historical_snapshot
 from kw_mi_os.ingestion import FetchResult, SourceCatalogEntry, fetch_json
 from kw_mi_os.learning import build_learning_records
-from kw_mi_os.models import CandidateRecord, SignalInput, SourceClass, SourceEvidenceRecord
+from kw_mi_os.models import (
+    AlertRecord,
+    CalibratedSignalRecord,
+    CandidateRecord,
+    DecisionQualityReport,
+    PortfolioProposal,
+    PortfolioQualityReport,
+    PortfolioSnapshot,
+    RebalanceAction,
+    RiskControlCheck,
+    RiskControlResult,
+    SignalInput,
+    SourceClass,
+    SourceEvidenceRecord,
+)
 from kw_mi_os.phase4 import (
     build_benchmark_result,
     build_decision_quality_report,
     build_signal_usefulness_report,
     calibrate_signals,
 )
+from kw_mi_os.phase5 import apply_risk_controls, build_alerts, construct_portfolio_proposal, plan_rebalance
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.ranking import rank_candidates
 from kw_mi_os.signal_engine import compute_signals
@@ -39,9 +54,14 @@ from kw_mi_os.validation import (
     validate_historical_snapshot,
     validate_learning_records,
     validate_manifest,
+    validate_portfolio_proposal,
+    validate_portfolio_snapshot_compatibility,
     validate_quarterly,
+    validate_rebalance_actions,
+    validate_risk_control_result,
     validate_source_growth_record,
     validate_signal_usefulness_report,
+    validate_alert_records,
     validate_universe,
 )
 
@@ -92,10 +112,11 @@ def test_ranking_no_double_counting_of_trust():
 
 
 def test_phase_contracts_defined_and_idempotent():
-    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4'}
+    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5'}
     assert all(v.idempotent for v in PHASE_CONTRACTS.values())
     assert PHASE_CONTRACTS['phase3'].outputs
     assert PHASE_CONTRACTS['phase4'].outputs
+    assert PHASE_CONTRACTS['phase5'].outputs
 
 
 def test_historical_snapshot_validation_and_point_in_time_behavior():
@@ -202,6 +223,13 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
         ROOT / 'runtime/latest/evaluation_latest.json',
         ROOT / 'runtime/latest/benchmark_latest.json',
         ROOT / 'runtime/latest/decision_quality_latest.json',
+        ROOT / 'runtime/latest/portfolio_latest.json',
+        ROOT / 'runtime/latest/rebalance_latest.json',
+        ROOT / 'runtime/latest/alerts_latest.json',
+        ROOT / 'runtime/quality/portfolio_quality_report.json',
+        ROOT / 'runtime/quality/risk_control_report.json',
+        ROOT / 'runtime/quality/alert_report.json',
+        ROOT / 'runtime/learning/portfolio_decision_history.json',
         ROOT / 'runtime/latest/run_manifest.json',
     ]
     for p in required:
@@ -211,6 +239,7 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
     validate_manifest(manifest)
     assert 'historical_snapshot_schema' in manifest['validations']
     assert 'phase4_decision_quality_schema' in manifest['validations']
+    assert 'phase5_alert_schema' in manifest['validations']
 
 
 def test_phase4_outputs_validate_from_sample_outcomes():
@@ -274,3 +303,113 @@ def test_deterministic_sample_mode_outputs():
     subprocess.check_call(['python', 'scripts/run_phase.py', '--sample-mode'])
     second = (ROOT / 'runtime/latest/evaluation_latest.json').read_text(encoding='utf-8')
     assert first == second
+
+
+def test_phase5_portfolio_and_risk_controls_non_tradable_rejection():
+    _, quarterly, evidence, _ = _sample_pipeline_inputs()
+    snapshot = build_historical_snapshot(
+        snapshot_id='snap_6',
+        as_of_date=date.fromisoformat('2026-04-10'),
+        quarterly_records=quarterly,
+        evidence_records=evidence,
+    )
+    outcomes = track_candidate_outcomes(
+        candidates=[CandidateRecord(symbol='NBK', base_signal=0.4, trust_score=0.9, final_score=0.36, reason='x')],
+        snapshot=snapshot,
+        observed_outcomes_by_symbol={'NBK': 0.03},
+        explanations_by_symbol={'NBK': {'missing_data_penalties': 0.01}},
+    )
+    _, calibrated = calibrate_signals(snapshot.snapshot_id, outcomes)
+    proposal = construct_portfolio_proposal(
+        candidates=[
+            CandidateRecord(symbol='NBK', base_signal=0.4, trust_score=0.9, final_score=0.36, reason='x'),
+            CandidateRecord(symbol='NONTRADE', base_signal=0.4, trust_score=0.9, final_score=0.35, reason='x'),
+        ],
+        calibrated_signals=calibrated + [CalibratedSignalRecord(symbol='NONTRADE', snapshot_id='snap_6', raw_signal=0.35, calibrated_signal=0.35, observed_return=None, evaluable=True, outcome_status='candidate_outcome_unavailable')],
+        decision_quality_score=0.6,
+        liquidity_by_symbol={'NBK': 0.8, 'NONTRADE': 0.8},
+        tradable_symbols={'NBK'},
+        min_inclusion_quality=0.1,
+        max_holdings=3,
+    )
+    validate_portfolio_proposal(proposal)
+    assert all(p.symbol != 'NONTRADE' for p in proposal.positions)
+
+    risk = apply_risk_controls(
+        proposal=proposal,
+        prior_snapshot=None,
+        max_single_position_weight=0.6,
+        max_total_active_positions=3,
+        min_liquidity_signal=0.5,
+        min_decision_quality_signal=0.2,
+        turnover_cap=0.8,
+        cash_buffer=0.01,
+    )
+    validate_risk_control_result(risk)
+    assert 0 <= sum(p.target_weight for p in risk.adjusted_positions) <= 1
+
+
+def test_phase5_rebalance_join_fail_closed_and_alert_structure():
+    subprocess.check_call(['python', 'scripts/run_phase.py', '--sample-mode'])
+    portfolio = json.loads((ROOT / 'runtime/latest/portfolio_latest.json').read_text(encoding='utf-8'))
+    bad_prior = PortfolioSnapshot(
+        snapshot_id='prior',
+        as_of_utc='2026-04-10T00:00:00+00:00',
+        positions=[{'symbol': portfolio['positions'][0]['symbol'], 'canonical_entity_id': 'KW:DIFF', 'weight': portfolio['positions'][0]['weight']}],
+        residual_cash_weight=0.0,
+    )
+    target_snapshot = PortfolioSnapshot(
+        snapshot_id=str(portfolio['snapshot_id']),
+        as_of_utc=str(portfolio['as_of_utc']),
+        positions=list(portfolio['positions']),
+        residual_cash_weight=float(portfolio['residual_cash_weight']),
+    )
+    with pytest.raises(ValueError):
+        plan_rebalance(prior_snapshot=bad_prior, target_snapshot=target_snapshot)
+
+    actions = [RebalanceAction(symbol='NBK', canonical_entity_id='KW:NBK', action='hold', prior_weight=0.2, target_weight=0.2, delta_weight=0.0, reason='x')]
+    validate_rebalance_actions(actions)
+    mock_proposal = PortfolioProposal(
+        proposal_id='p1',
+        generated_at_utc='2026-04-10T00:00:00+00:00',
+        positions=[],
+        excluded_candidates=[{'reason': 'missing_calibrated_signal'}],
+        max_holdings=3,
+        min_inclusion_quality=0.1,
+        total_target_weight=0.0,
+        quality_report=PortfolioQualityReport(
+            portfolio_quality_score=0.3,
+            quality_bucket='weak',
+            included_count=0,
+            excluded_count=1,
+            average_decision_quality=0.4,
+            limitations=['sparse'],
+        ),
+    )
+    mock_decision = DecisionQualityReport(
+        snapshot_id='snap',
+        decision_quality_score=0.4,
+        confidence_band={'low': 0.1, 'high': 0.8},
+        benchmark_comparison={},
+        signal_usefulness={},
+        summary='low quality',
+        limitations=['sparse'],
+    )
+    mock_risk = RiskControlResult(
+        proposal_id='p1',
+        controls=[RiskControlCheck(control_name='turnover_cap', status='adjusted', binding=True, details={})],
+        adjusted_positions=[],
+        residual_cash_weight=1.0,
+        turnover=0.8,
+        status='adjusted',
+        risk_adjusted_snapshot=target_snapshot,
+    )
+    alerts = build_alerts(
+        decision_quality=mock_decision,
+        proposal=mock_proposal,
+        risk=mock_risk,
+        rebalance_actions=actions,
+        benchmark_excess_return=-0.01,
+    )
+    validate_alert_records(alerts)
+    assert {a.severity for a in alerts}.issubset({'info', 'warning', 'critical'})
