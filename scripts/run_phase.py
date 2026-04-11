@@ -61,6 +61,7 @@ from kw_mi_os.phase8 import (
     build_rollout_metadata,
     build_signoff_recommendation,
 )
+from kw_mi_os.phase9 import build_daily_export_bundle, write_daily_exports
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
@@ -99,6 +100,10 @@ from kw_mi_os.validation import (
     validate_reporting_metadata,
     validate_review_checklist,
     validate_daily_rollout_report,
+    validate_daily_export_bundle,
+    validate_export_metadata,
+    validate_csv_export,
+    validate_markdown_summary,
     validate_operator_verdict,
     validate_phase8_required_inputs,
     validate_rollout_history,
@@ -128,7 +133,7 @@ def _load_prior_snapshot(path: Path) -> PortfolioSnapshot | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
@@ -608,7 +613,7 @@ def main() -> int:
             'phase7_consolidated_report_schema',
         ])
 
-    if args.phase in {'all', 'phase8'}:
+    if args.phase in {'all', 'phase8', 'phase9'}:
         phase8_inputs = [
             ROOT / 'runtime' / 'latest' / 'operating_status_latest.json',
             ROOT / 'runtime' / 'latest' / 'health_status_latest.json',
@@ -727,6 +732,25 @@ def main() -> int:
             'phase8_daily_rollout_schema',
             'phase8_rollout_history_schema',
             'phase8_rollout_metadata_schema',
+        ])
+
+    if args.phase in {'all', 'phase9'}:
+        bundle, csv_specs, markdown = build_daily_export_bundle(root=ROOT, mode=mode)
+        validate_daily_export_bundle(bundle)
+        validate_export_metadata(bundle.export_metadata)
+        validate_markdown_summary(markdown)
+        exported = write_daily_exports(root=ROOT, bundle=bundle, markdown=markdown)
+        for spec in csv_specs:
+            validate_csv_export(ROOT / spec.output_path, spec.headers)
+
+        files_written.extend([str(ROOT / rel) for rel in exported])
+        validations.extend([
+            'phase9_required_inputs_present',
+            'phase9_daily_export_bundle_schema',
+            'phase9_export_metadata_schema',
+            'phase9_markdown_summary_sections',
+            'phase9_csv_consistency',
+            'phase9_contradiction_rejection',
         ])
 
     checksums = {

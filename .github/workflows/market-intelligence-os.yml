@@ -28,6 +28,7 @@ on:
           - phase6
           - phase7
           - phase8
+          - phase9
 
 jobs:
   schema-and-audit:
@@ -69,3 +70,12 @@ jobs:
           PHASE="${{ github.event.inputs.phase || 'all' }}"
           python scripts/run_phase.py --mode "${MODE}" --phase "${PHASE}"
       - run: pytest -q
+      - name: Upload runtime and daily export artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kw-mi-os-artifacts-${{ github.run_id }}
+          path: |
+            runtime/latest
+            runtime/quality
+            reports
+          if-no-files-found: warn

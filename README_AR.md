@@ -2,7 +2,7 @@
 
 نظام استخبارات سوق الكويت مبني بنهج **candidate-selection** وليس تنفيذ لحظي.
 
-## Architecture Overview (Phase 8)
+## Architecture Overview (Phase 9)
 - `signal_engine.py`: حساب الإشارات الأساسية (trend, quality, liquidity, value, event, coverage) مع حدود واضحة وmissing-data penalty.
 - `evidence_normalization.py`: تحويل الأدلة الخام إلى سجلات typed + quarantine للكيانات غير القابلة للتداول/السياقية.
 - `candidate_assembly.py`: دمج universe + signals + governance + evidence وإنتاج candidates/exclusions/explanations/quality report.
@@ -15,8 +15,9 @@
 - `phase6.py`: طبقة تشغيل scheduling-ready: سجل تشغيل run records، health monitoring، فحوصات freshness/stale data، تصنيف failures، ونشر operating status قابل للتفسير.
 - `phase7.py`: طبقة dashboard/reporting للاستخدام اليومي البشري: snapshot موحّد، daily review summary، checklist منظّم بحسب severity/priority، وتقرير consolidated_latest_report.
 - `phase8.py`: طبقة rollout automation لمدة 30 يوم: توليد daily rollout report، verdict آلي (`approved/caution/reject`)، sign-off recommendation، وحفظ rollout history بشكل append-safe.
+- `phase9.py`: طبقة daily export: بناء bundle يومي canonical بصيغة JSON، وتصدير CSV analysis-friendly، وإنشاء ملخّص Markdown بشري من أحدث artifacts الموثّقة.
 
-## Runtime artifacts (Phase 8)
+## Runtime artifacts (Phase 9)
 ### Publishing + Quality
 - `runtime/candidates/candidates.json`
 - `runtime/quality/exclusions.json`
@@ -72,6 +73,16 @@
 - `runtime/latest/decision_quality_latest.json`
 - `runtime/learning/rollout_30_day_history.json`
 
+### Daily export artifacts (`reports/`)
+- `reports/daily_export_latest.json` (canonical machine-readable bundle)
+- `reports/daily_summary.md` (human-readable daily narrative)
+- `reports/candidates_latest.csv`
+- `reports/portfolio_latest.csv`
+- `reports/rebalance_latest.csv`
+- `reports/alerts_latest.csv`
+- `reports/operating_status_latest.csv`
+- `reports/export_metadata.json` (timestamp/source manifest/mode/phase coverage/warnings/export version)
+
 ## فلسفة Phase 5 وحدودها
 - **Portfolio construction** يستهلك مخرجات validated من المراحل السابقة فقط؛ لا يعيد كتابة ranking ولا governance.
 - **Risk controls** صريحة وقابلة للتدقيق: max weight, active positions, liquidity, decision-quality, tradability, turnover cap, وcash buffer.
@@ -91,9 +102,17 @@ pytest -q
 
 ## التشغيل المجدول (GitHub Actions)
 - workflow `.github/workflows/market-intelligence-os.yml` يدعم:
-  - `workflow_dispatch` للتشغيل اليدوي (sample/live + phase override حتى `phase8`).
-  - `schedule` يومي عبر cron لتشغيل آلي repo-native بعد الدمج.
-- في البيئات ephemeral (مثل CI) قد لا تبقى `runtime/` بين الجلسات؛ لذلك Phase 8 يدوّن limitation صريح داخل `runtime/quality/rollout_metadata.json`.
+  - `workflow_dispatch` للتشغيل اليدوي (sample/live + phase override حتى `phase9`).
+  - `schedule` يومي عبر cron لتشغيل آلي repo-native بعد الدمج، ثم رفع artifacts من `runtime/` و`reports/`.
+- في البيئات ephemeral (مثل CI) قد لا تبقى `runtime/` و`reports/` بين الجلسات؛ لذلك توجد limitation note داخل metadata ويتم رفع artifacts القابلة للتنزيل.
+
+## تشغيل التصدير اليومي يدويًا (Phase 9)
+- المسار الكامل الموصى به:
+  - `python scripts/run_phase.py --sample-mode` (يشمل Phase 1→9 افتراضيًا)
+- تشغيل مخصص للتصدير بعد توفر latest validated inputs:
+  - `python scripts/run_phase.py --mode sample --phase phase9`
+- المخرجات التحليلية الرسمية في هذه المرحلة هي: **JSON + CSV + Markdown فقط**.
+- **PowerPoint خارج النطاق عمدًا في Phase 9**.
 
 ## Workflow المراجعة اليومية (Phase 8)
 - شغّل `python scripts/run_phase.py --sample-mode` لإنتاج أحدث snapshots.

@@ -23,6 +23,7 @@ from kw_mi_os.models import (
     CandidateRecord,
     DecisionQualityReport,
     FailureRecord,
+    ExportMetadata,
     FreshnessCheck,
     HealthStatusReport,
     OperatingStatusSnapshot,
@@ -35,12 +36,14 @@ from kw_mi_os.models import (
     RiskControlCheck,
     RiskControlResult,
     SchedulerStatus,
+    MarkdownSummary,
     SignoffRecommendation,
     SignalInput,
     SourceClass,
     SourceEvidenceRecord,
 )
 from kw_mi_os.phase8 import append_rollout_history, build_daily_rollout_report, build_operator_verdict, build_rollout_metadata, build_signoff_recommendation
+from kw_mi_os.phase9 import build_daily_export_bundle, validate_phase9_required_inputs, write_daily_exports
 from kw_mi_os.phase4 import (
     build_benchmark_result,
     build_decision_quality_report,
@@ -97,6 +100,10 @@ from kw_mi_os.validation import (
     validate_signal_usefulness_report,
     validate_signoff_recommendation,
     validate_daily_rollout_report,
+    validate_daily_export_bundle,
+    validate_export_metadata,
+    validate_csv_export,
+    validate_markdown_summary,
     validate_health_status_report,
     validate_universe,
 )
@@ -148,7 +155,7 @@ def test_ranking_no_double_counting_of_trust():
 
 
 def test_phase_contracts_defined_and_idempotent():
-    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}
+    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'}
     assert all(v.idempotent for v in PHASE_CONTRACTS.values())
     assert PHASE_CONTRACTS['phase3'].outputs
     assert PHASE_CONTRACTS['phase4'].outputs
@@ -156,6 +163,7 @@ def test_phase_contracts_defined_and_idempotent():
     assert PHASE_CONTRACTS['phase6'].outputs
     assert PHASE_CONTRACTS['phase7'].outputs
     assert PHASE_CONTRACTS['phase8'].outputs
+    assert PHASE_CONTRACTS['phase9'].outputs
 
 
 def test_historical_snapshot_validation_and_point_in_time_behavior():
@@ -290,6 +298,14 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
         ROOT / 'runtime/quality/rollout_metadata.json',
         ROOT / 'runtime/learning/operating_run_history.json',
         ROOT / 'runtime/learning/rollout_30_day_history.json',
+        ROOT / 'reports/daily_export_latest.json',
+        ROOT / 'reports/daily_summary.md',
+        ROOT / 'reports/candidates_latest.csv',
+        ROOT / 'reports/portfolio_latest.csv',
+        ROOT / 'reports/rebalance_latest.csv',
+        ROOT / 'reports/alerts_latest.csv',
+        ROOT / 'reports/operating_status_latest.csv',
+        ROOT / 'reports/export_metadata.json',
         ROOT / 'runtime/latest/run_manifest.json',
     ]
     for p in required:
@@ -303,6 +319,7 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
     assert 'phase6_operating_status_schema' in manifest['validations']
     assert 'phase7_consolidated_report_schema' in manifest['validations']
     assert 'phase8_daily_rollout_schema' in manifest['validations']
+    assert 'phase9_daily_export_bundle_schema' in manifest['validations']
 
 
 def test_phase4_outputs_validate_from_sample_outcomes():
@@ -648,3 +665,55 @@ def test_phase8_workflow_schedule_present_and_dispatch_inputs():
     assert 'workflow_dispatch:' in text
     assert 'mode:' in text
     assert 'phase8' in text
+    assert 'phase9' in text
+    assert 'reports' in text
+
+
+def test_phase9_daily_export_generation_and_validation():
+    subprocess.check_call(['python', 'scripts/run_phase.py', '--sample-mode'])
+    bundle, csv_specs, markdown = build_daily_export_bundle(root=ROOT, mode='sample')
+    validate_phase9_required_inputs([
+        ROOT / 'runtime/latest/dashboard_snapshot.json',
+        ROOT / 'runtime/latest/daily_review_latest.json',
+        ROOT / 'runtime/latest/consolidated_latest_report.json',
+        ROOT / 'runtime/latest/operating_status_latest.json',
+        ROOT / 'runtime/latest/portfolio_latest.json',
+        ROOT / 'runtime/latest/rebalance_latest.json',
+        ROOT / 'runtime/latest/alerts_latest.json',
+    ])
+    validate_daily_export_bundle(bundle)
+    validate_export_metadata(bundle.export_metadata)
+    validate_markdown_summary(markdown)
+
+    outputs = write_daily_exports(root=ROOT, bundle=bundle, markdown=markdown)
+    assert 'reports/daily_export_latest.json' in outputs
+    for spec in csv_specs:
+        validate_csv_export(ROOT / spec.output_path, spec.headers)
+
+
+def test_phase9_export_validation_fail_closed():
+    with pytest.raises(ValueError):
+        validate_export_metadata(
+            ExportMetadata(
+                phase='phase8',
+                export_version='x',
+                mode='sample',
+                export_timestamp_utc='2026-04-10T00:00:00Z',
+                source_run_timestamp_utc=None,
+                source_manifest_reference='runtime/latest/run_manifest.json',
+                phase_coverage=['phase9'],
+                exported_files=['reports/daily_export_latest.json'],
+                warnings_limitations=[],
+                deterministic_sample_mode=True,
+            )
+        )
+    with pytest.raises(ValueError):
+        validate_markdown_summary(
+            MarkdownSummary(
+                output_path='reports/daily_summary.md',
+                content='# only title',
+                sections=[],
+            )
+        )
+    with pytest.raises(ValueError):
+        validate_phase9_required_inputs([ROOT / 'runtime/latest/not_present_phase9.json'])

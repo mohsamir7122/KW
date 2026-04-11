@@ -599,3 +599,48 @@ class RolloutMetadata:
     generated_outputs: list[str]
     history_window_days: int
     persistence_limitation_note: str
+
+
+@dataclass(frozen=True)
+class CsvExportSpec:
+    name: str
+    output_path: str
+    headers: list[str]
+    row_count: int
+
+
+@dataclass(frozen=True)
+class MarkdownSummary:
+    output_path: str
+    content: str
+    sections: list[str]
+
+
+@dataclass(frozen=True)
+class ExportMetadata:
+    phase: str
+    export_version: str
+    mode: str
+    export_timestamp_utc: str
+    source_run_timestamp_utc: str | None
+    source_manifest_reference: str
+    phase_coverage: list[str]
+    exported_files: list[str]
+    warnings_limitations: list[str]
+    deterministic_sample_mode: bool
+
+
+@dataclass(frozen=True)
+class DailyExportBundle:
+    run_id: str
+    mode: str
+    dashboard_snapshot: dict[str, object]
+    daily_review_summary: dict[str, object]
+    consolidated_latest_report: dict[str, object]
+    operating_status_summary: dict[str, object]
+    portfolio_latest: dict[str, object]
+    rebalance_latest: list[dict[str, object]]
+    alerts_latest: list[dict[str, object]]
+    operator_verdict: dict[str, object] | None
+    signoff_recommendation: dict[str, object] | None
+    export_metadata: ExportMetadata

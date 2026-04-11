@@ -26,7 +26,10 @@ from .models import (
     OperatingRunRecord,
     OperatingStatusSnapshot,
     ConsolidatedLatestReport,
+    DailyExportBundle,
     DailyRolloutReport,
+    ExportMetadata,
+    MarkdownSummary,
     OperatorVerdict,
     ReportingMetadata,
     RolloutHistory,
@@ -527,3 +530,64 @@ def validate_phase8_required_inputs(required_paths: list[Path]) -> list[Path]:
         missing_text = ', '.join(str(path) for path in missing)
         raise ValueError(f'phase8 missing upstream artifacts: {missing_text}')
     return required_paths
+
+
+def validate_export_metadata(metadata: ExportMetadata) -> ExportMetadata:
+    if metadata.phase != 'phase9':
+        raise ValueError('export metadata phase must be phase9')
+    if not metadata.export_version:
+        raise ValueError('export metadata requires export_version')
+    if metadata.mode not in {'sample', 'live'}:
+        raise ValueError('export metadata mode must be sample|live')
+    if not metadata.exported_files:
+        raise ValueError('export metadata requires exported_files')
+    if not metadata.source_manifest_reference.endswith('run_manifest.json'):
+        raise ValueError('export metadata source_manifest_reference must reference run_manifest.json')
+    return metadata
+
+
+def validate_markdown_summary(summary: MarkdownSummary) -> MarkdownSummary:
+    required_sections = [
+        'Executive Summary',
+        'Dashboard Snapshot',
+        'Daily Review Summary',
+        'Operating Status / Health',
+        'Portfolio & Rebalance',
+        'Alerts',
+        'Operator Verdict / Signoff',
+        'Export Metadata',
+    ]
+    if not summary.content.strip():
+        raise ValueError('markdown summary cannot be empty')
+    for section in required_sections:
+        if f'## {section}' not in summary.content:
+            raise ValueError(f'markdown summary missing section: {section}')
+    return summary
+
+
+def validate_daily_export_bundle(bundle: DailyExportBundle) -> DailyExportBundle:
+    if not bundle.run_id:
+        raise ValueError('daily export bundle requires run_id')
+    if not bundle.dashboard_snapshot or not bundle.daily_review_summary or not bundle.consolidated_latest_report:
+        raise ValueError('daily export bundle missing required report sections')
+    if not bundle.operating_status_summary or not bundle.portfolio_latest:
+        raise ValueError('daily export bundle missing operating/portfolio summaries')
+    validate_export_metadata(bundle.export_metadata)
+    summary_state = str(bundle.daily_review_summary.get('system_state', ''))
+    operating_state = str(bundle.operating_status_summary.get('operating_status', ''))
+    if summary_state and operating_state and summary_state != operating_state:
+        raise ValueError('daily export contradiction: summary system_state != operating operating_status')
+    return bundle
+
+
+def validate_csv_export(path: Path, required_headers: list[str]) -> None:
+    if not path.exists():
+        raise ValueError(f'missing csv export: {path}')
+    with path.open(newline='', encoding='utf-8') as handle:
+        reader = csv.DictReader(handle)
+        headers = list(reader.fieldnames or [])
+        if headers != required_headers:
+            raise ValueError(f'csv headers mismatch for {path}: expected {required_headers} got {headers}')
+        for index, row in enumerate(reader, start=2):
+            if set(row.keys()) != set(required_headers):
+                raise ValueError(f'csv row/column mismatch for {path} at line {index}')
