@@ -28,6 +28,7 @@ on:
           - phase6
           - phase7
           - phase8
+          - phase9
 
 jobs:
   schema-and-audit:

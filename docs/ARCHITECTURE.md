@@ -1,4 +1,4 @@
-# Architecture Hardening + Phase 8 Automated 30-Day Rollout Layer
+# Architecture Hardening + Phase 9 Daily Export Layer
 
 ## Phase 2 core modules (preserved)
 - `signal_engine.py`: produces bounded signal vector per tradable equity.
@@ -26,6 +26,9 @@
 ## New Phase 8 modules
 - `phase8.py`: consumes validated Phase 6/7 operational outputs and publishes deterministic daily rollout report, automated operator verdict/sign-off recommendation, and append-safe 30-day rollout history.
 
+## New Phase 9 modules
+- `phase9.py`: consumes validated latest operational/investment artifacts and publishes scheduler-friendly daily exports in JSON + CSV + Markdown with explicit export metadata.
+
 ## Boundary rules
 - Governance emits trust and contribution eligibility only.
 - Ranking consumes validated signal + trust once (no double counting).
@@ -36,6 +39,7 @@
 - Phase 6 operating health is observational and publish-only; it never mutates candidate/ranking/portfolio decisions.
 - Phase 7 reporting is consume-and-summarize only; it never mutates ranking, portfolio construction, risk controls, or monitoring state.
 - Phase 8 rollout automation is consume-and-review only; it never mutates ranking, portfolio, monitoring, or dashboard production logic.
+- Phase 9 export layer is consume-and-export only; it never mutates governance, ranking, portfolio/risk/rebalance logic, monitoring, or rollout verdict semantics.
 
 ## End-to-end flow (`run_phase.py --sample-mode`)
 1. Validate universe + quarterly inputs.
@@ -67,6 +71,7 @@
 27. Build Phase 8 operator verdict + signoff recommendation from validated upstream artifacts.
 28. Build Phase 8 daily rollout report and append/update 30-day rollout history.
 29. Publish Phase 8 latest/quality/learning artifacts and enrich run manifest with Phase 8 validations.
+30. Build Phase 9 export bundle and publish scheduler-friendly reports (`reports/`) in canonical JSON + analysis CSV + Markdown + metadata.
 
 ## Evaluation limitations (explicit by design)
 - This is walk-forward scaffolding, not a full institutional backtester.
@@ -109,6 +114,10 @@
 - `runtime/quality/operator_verdict_report.json`: combined verdict + signoff artifact for audit.
 - `runtime/quality/rollout_metadata.json`: Phase 8 lineage, determinism, and persistence limitations.
 - `runtime/learning/rollout_30_day_history.json`: append-safe rolling 30-day rollout history.
+- `reports/daily_export_latest.json`: canonical daily export bundle payload.
+- `reports/candidates_latest.csv`, `reports/portfolio_latest.csv`, `reports/rebalance_latest.csv`, `reports/alerts_latest.csv`, `reports/operating_status_latest.csv`: analysis-friendly exports.
+- `reports/daily_summary.md`: human-readable run summary.
+- `reports/export_metadata.json`: export lineage and scheduler-friendly publication metadata.
 
 ## Remaining later-phase work
 - richer multi-horizon outcome windows and event-aligned attribution.
