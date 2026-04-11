@@ -1,0 +1,5 @@
+symbol,arabic_name,english_name,sector,market,listing_status,entity_type,tradable_flag,sec_code,isin,source_primary,source_secondary,verified_at_utc
+NBK,بنك الكويت الوطني,National Bank of Kuwait,Banking,Boursa Kuwait,listed,kuwait_listed_equity,true,101,KW0EQ0100010,boursakuwait,company_ir,2026-04-11T00:00:00Z
+ZAIN,زين,Zain Kuwait,Telecom,Boursa Kuwait,listed,kuwait_listed_equity,true,102,KW0EQ0200020,boursakuwait,company_ir,2026-04-11T00:00:00Z
+AGLTY,أجيليتي,Agility,Logistics,Boursa Kuwait,listed,kuwait_listed_equity,true,103,KW0EQ0300030,boursakuwait,company_ir,2026-04-11T00:00:00Z
+MACRO,سياق كلي,Macro Context,Context,External,active,context_macro,false,900,NA,macro_feed,eia,2026-04-11T00:00:00Z

@@ -1,0 +1,4 @@
+symbol,quarter_end,fiscal_period,filing_date,revenue,operating_profit,net_profit,eps,total_assets,total_liabilities,total_equity,cash_from_operations,capex,dividend_flag,buyback_flag,material_event_flag,source_primary,source_secondary,verified_at_utc
+NBK,2025-12-31,Q4-2025,2026-02-05,1250000000,520000000,410000000,0.042,41000000000,36000000000,5000000000,450000000,70000000,true,false,false,company_ir,boursakuwait,2026-04-11T00:00:00Z
+ZAIN,2025-12-31,Q4-2025,2026-02-10,980000000,180000000,120000000,0.028,8000000000,5200000000,2800000000,210000000,90000000,true,false,false,company_ir,boursakuwait,2026-04-11T00:00:00Z
+AGLTY,2025-12-31,Q4-2025,2026-02-14,640000000,92000000,70000000,0.017,6100000000,3600000000,2500000000,130000000,50000000,false,false,true,company_ir,reuters,2026-04-11T00:00:00Z
