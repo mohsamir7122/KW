@@ -23,6 +23,10 @@ from .models import (
     HistoricalSnapshotRecord,
     LearningRecord,
     ListingStatus,
+    MarketDataQualityReport,
+    MarketDataRow,
+    MarketDataSnapshot,
+    MarketSourceStatus,
     OperatingRunRecord,
     OperatingStatusSnapshot,
     ConsolidatedLatestReport,
@@ -591,3 +595,49 @@ def validate_csv_export(path: Path, required_headers: list[str]) -> None:
         for index, row in enumerate(reader, start=2):
             if set(row.keys()) != set(required_headers):
                 raise ValueError(f'csv row/column mismatch for {path} at line {index}')
+
+
+def validate_market_source_statuses(statuses: list[MarketSourceStatus]) -> list[MarketSourceStatus]:
+    if not statuses:
+        raise ValueError('market source statuses cannot be empty')
+    for status in statuses:
+        if not status.source_name:
+            raise ValueError('market source_name is required')
+        if status.rows_fetched < 0:
+            raise ValueError('market rows_fetched cannot be negative')
+    return statuses
+
+
+def validate_market_data_rows(rows: list[MarketDataRow]) -> list[MarketDataRow]:
+    if not rows:
+        raise ValueError('market data rows cannot be empty')
+    seen: set[str] = set()
+    for row in rows:
+        if not row.symbol or not row.company_name:
+            raise ValueError('market row missing symbol/company_name')
+        if not row.canonical_entity_id.startswith('KW:'):
+            raise ValueError(f'market row unresolved canonical mapping for {row.symbol}')
+        if row.last_price <= 0:
+            raise ValueError(f'market row invalid last_price for {row.symbol}')
+        if row.symbol in seen:
+            raise ValueError(f'market row duplicate symbol {row.symbol}')
+        seen.add(row.symbol)
+    return rows
+
+
+def validate_market_quality_report(report: MarketDataQualityReport) -> MarketDataQualityReport:
+    if report.rows_total < 0 or report.unique_symbols < 0:
+        raise ValueError('market quality row counts must be non-negative')
+    if report.ready_for_downstream and report.validation_failures:
+        raise ValueError('market quality cannot be ready_for_downstream with validation_failures')
+    return report
+
+
+def validate_market_data_snapshot(snapshot: MarketDataSnapshot) -> MarketDataSnapshot:
+    if not snapshot.snapshot_id:
+        raise ValueError('market snapshot_id is required')
+    validate_market_source_statuses(snapshot.sources)
+    validate_market_quality_report(snapshot.quality)
+    if snapshot.quality.ready_for_downstream:
+        validate_market_data_rows(snapshot.rows)
+    return snapshot
