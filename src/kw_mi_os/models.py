@@ -27,6 +27,13 @@ class SourceClass(str, Enum):
     macro_context_only = 'macro_context_only'
 
 
+class MarketSourceClass(str, Enum):
+    priority_1_official_market = 'priority_1_official_market'
+    priority_2_exchange_adjacent = 'priority_2_exchange_adjacent'
+    priority_3_secondary_market_data = 'priority_3_secondary_market_data'
+    priority_4_news_context = 'priority_4_news_context'
+
+
 @dataclass(frozen=True)
 class UniverseRecord:
     symbol: str
@@ -644,3 +651,81 @@ class DailyExportBundle:
     operator_verdict: dict[str, object] | None
     signoff_recommendation: dict[str, object] | None
     export_metadata: ExportMetadata
+
+
+@dataclass(frozen=True)
+class MarketSourceCatalogEntry:
+    source_name: str
+    source_class: MarketSourceClass
+    expected_reliability: str
+    expected_freshness: str
+    parsing_notes: str
+    login_notes: str
+    allowed_use: str
+    fallback_priority: int
+    url: str
+    timeout_sec: int
+
+
+@dataclass(frozen=True)
+class MarketDataRow:
+    symbol: str
+    company_name: str
+    canonical_entity_id: str
+    last_price: float
+    price_change: float | None
+    percent_change: float | None
+    volume: int | None
+    value_traded: float | None
+    session_date: str
+    market_status: str
+    source_name: str
+    source_class: str
+    source_url: str
+    fetched_at_utc: str
+    source_trace_id: str
+
+
+@dataclass(frozen=True)
+class MarketSourceStatus:
+    source_name: str
+    source_class: str
+    attempted: bool
+    success: bool
+    rows_fetched: int
+    error: str | None
+    fallback_used: bool
+    notes: str
+
+
+@dataclass(frozen=True)
+class MarketDataQualityReport:
+    run_id: str
+    rows_total: int
+    unique_symbols: int
+    source_count: int
+    primary_source_ok: bool
+    validation_failures: list[str]
+    limitations: list[str]
+    ready_for_downstream: bool
+
+
+@dataclass(frozen=True)
+class MarketDataIngestionMetadata:
+    mode: str
+    primary_source: str
+    attempted_sources: list[str]
+    successful_sources: list[str]
+    fallback_used: bool
+    limitations: list[str]
+
+
+@dataclass(frozen=True)
+class MarketDataSnapshot:
+    snapshot_id: str
+    as_of_utc: str
+    trading_session_date: str
+    rows: list[MarketDataRow]
+    quality: MarketDataQualityReport
+    sources: list[MarketSourceStatus]
+    metadata: MarketDataIngestionMetadata

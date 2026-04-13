@@ -1,4 +1,4 @@
-# Architecture Hardening + Phase 9 Daily Export Layer
+# Architecture Hardening + Phase 10 Kuwait Market Data Feed
 
 ## Phase 2 core modules (preserved)
 - `signal_engine.py`: produces bounded signal vector per tradable equity.
@@ -29,6 +29,9 @@
 ## New Phase 9 modules
 - `phase9.py`: consumes validated latest artifacts and publishes a canonical JSON daily export bundle, analysis-friendly CSV slices, and a human-readable Markdown daily summary into `reports/`.
 
+## New Phase 10 modules
+- `market_data.py`: attempts real Kuwait market-data ingestion with explicit source-priority governance, source-status tracking, normalization/canonical mapping, fail-closed quality validation, and artifact publication.
+
 ## Boundary rules
 - Governance emits trust and contribution eligibility only.
 - Ranking consumes validated signal + trust once (no double counting).
@@ -40,6 +43,7 @@
 - Phase 7 reporting is consume-and-summarize only; it never mutates ranking, portfolio construction, risk controls, or monitoring state.
 - Phase 8 rollout automation is consume-and-review only; it never mutates ranking, portfolio, monitoring, or dashboard production logic.
 - Phase 9 export layer is consume-and-export only; it never mutates ranking, portfolio, monitoring, reporting, or rollout semantics.
+- Phase 10 market data feed is ingest-and-publish only; it never performs brokerage execution or order placement.
 
 ## End-to-end flow (`run_phase.py --sample-mode`)
 1. Validate universe + quarterly inputs.
@@ -73,6 +77,9 @@
 29. Publish Phase 8 latest/quality/learning artifacts and enrich run manifest with Phase 8 validations.
 30. Build Phase 9 daily export bundle from validated latest artifacts.
 31. Publish Phase 9 JSON + CSV + Markdown artifacts into `reports/` and enrich run manifest with export validations.
+32. Attempt Phase 10 Kuwait market data fetch from official source first, then controlled fallbacks with explicit status reporting.
+33. Normalize/map rows to canonical tradable Kuwait entities; reject unresolved/invalid rows fail-closed.
+34. Publish market-data latest/quality/report artifacts and enrich run manifest with Phase 10 validations/limitations.
 
 ## Evaluation limitations (explicit by design)
 - This is walk-forward scaffolding, not a full institutional backtester.
@@ -123,6 +130,13 @@
 - `reports/alerts_latest.csv`: tabular latest alert feed export.
 - `reports/operating_status_latest.csv`: tabular operating/health status snapshot export.
 - `reports/export_metadata.json`: export timestamp/source manifest/mode/phase coverage/exported files/limitations/version.
+- `runtime/latest/market_data_snapshot.json`: canonical latest Kuwait market data snapshot with metadata/source status/quality.
+- `runtime/latest/market_data_table.csv`: normalized tabular latest Kuwait market data.
+- `runtime/quality/market_data_quality_report.json`: fail-closed quality checks and downstream readiness.
+- `runtime/quality/market_source_report.json`: per-source attempted/success/fallback/error report.
+- `reports/market_data_summary.md`: human-readable market-data ingestion summary.
+- `reports/market_data_snapshot_latest.json`: report-layer copy of latest market snapshot.
+- `reports/market_data_table_latest.csv`: report-layer copy of latest market table.
 
 ## Remaining later-phase work
 - richer multi-horizon outcome windows and event-aligned attribution.

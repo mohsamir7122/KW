@@ -2,7 +2,7 @@
 
 نظام استخبارات سوق الكويت مبني بنهج **candidate-selection** وليس تنفيذ لحظي.
 
-## Architecture Overview (Phase 9)
+## Architecture Overview (Phase 10)
 - `signal_engine.py`: حساب الإشارات الأساسية (trend, quality, liquidity, value, event, coverage) مع حدود واضحة وmissing-data penalty.
 - `evidence_normalization.py`: تحويل الأدلة الخام إلى سجلات typed + quarantine للكيانات غير القابلة للتداول/السياقية.
 - `candidate_assembly.py`: دمج universe + signals + governance + evidence وإنتاج candidates/exclusions/explanations/quality report.
@@ -16,8 +16,9 @@
 - `phase7.py`: طبقة dashboard/reporting للاستخدام اليومي البشري: snapshot موحّد، daily review summary، checklist منظّم بحسب severity/priority، وتقرير consolidated_latest_report.
 - `phase8.py`: طبقة rollout automation لمدة 30 يوم: توليد daily rollout report، verdict آلي (`approved/caution/reject`)، sign-off recommendation، وحفظ rollout history بشكل append-safe.
 - `phase9.py`: طبقة daily export: بناء bundle يومي canonical بصيغة JSON، وتصدير CSV analysis-friendly، وإنشاء ملخّص Markdown بشري من أحدث artifacts الموثّقة.
+- `market_data.py`: طبقة Phase 10 لتغذية بيانات السوق الكويتية الفعلية: محاولة مصدر Boursa الرسمي أولًا، ثم fallback منظّم، مع تطبيع/ربط canonical وفحوصات جودة fail-closed قبل النشر.
 
-## Runtime artifacts (Phase 9)
+## Runtime artifacts (Phase 10)
 ### Publishing + Quality
 - `runtime/candidates/candidates.json`
 - `runtime/quality/exclusions.json`
@@ -83,6 +84,15 @@
 - `reports/operating_status_latest.csv`
 - `reports/export_metadata.json` (timestamp/source manifest/mode/phase coverage/warnings/export version)
 
+### Market data feed artifacts (Phase 10)
+- `runtime/latest/market_data_snapshot.json`
+- `runtime/latest/market_data_table.csv`
+- `runtime/quality/market_data_quality_report.json`
+- `runtime/quality/market_source_report.json`
+- `reports/market_data_summary.md`
+- `reports/market_data_snapshot_latest.json`
+- `reports/market_data_table_latest.csv`
+
 ## فلسفة Phase 5 وحدودها
 - **Portfolio construction** يستهلك مخرجات validated من المراحل السابقة فقط؛ لا يعيد كتابة ranking ولا governance.
 - **Risk controls** صريحة وقابلة للتدقيق: max weight, active positions, liquidity, decision-quality, tradability, turnover cap, وcash buffer.
@@ -102,7 +112,7 @@ pytest -q
 
 ## التشغيل المجدول (GitHub Actions)
 - workflow `.github/workflows/market-intelligence-os.yml` يدعم:
-  - `workflow_dispatch` للتشغيل اليدوي (sample/live + phase override حتى `phase9`).
+  - `workflow_dispatch` للتشغيل اليدوي (sample/live + phase override حتى `phase10`).
   - `schedule` يومي عبر cron لتشغيل آلي repo-native بعد الدمج، ثم رفع artifacts من `runtime/` و`reports/`.
 - في البيئات ephemeral (مثل CI) قد لا تبقى `runtime/` و`reports/` بين الجلسات؛ لذلك توجد limitation note داخل metadata ويتم رفع artifacts القابلة للتنزيل.
 
@@ -113,6 +123,19 @@ pytest -q
   - `python scripts/run_phase.py --mode sample --phase phase9`
 - المخرجات التحليلية الرسمية في هذه المرحلة هي: **JSON + CSV + Markdown فقط**.
 - **PowerPoint خارج النطاق عمدًا في Phase 9**.
+
+## تشغيل تغذية بيانات السوق يدويًا (Phase 10)
+- تشغيل كامل (يشمل المراحل السابقة + Phase 10):
+  - `python scripts/run_phase.py --sample-mode`
+- تشغيل Phase 10 فقط في sample mode:
+  - `python scripts/run_phase.py --sample-mode --phase phase10`
+- تشغيل Phase 10 في live mode (محاولة مصادر الويب الفعلية):
+  - `python scripts/run_phase.py --mode live --phase phase10`
+
+ملاحظات الحوكمة:
+- أولوية المصدر: Boursa الرسمي أولًا، ثم exchange-adjacent، ثم Yahoo/Investing كـ fallback ثانوي.
+- مصادر الأخبار سياقية فقط وليست مصدر سعر رسمي.
+- عند فشل الجودة/الحداثة/الربط canonical يتم الإخراج بحالة غير جاهزة downstream بدل تمرير بيانات متدهورة.
 
 ## Workflow المراجعة اليومية (Phase 8)
 - شغّل `python scripts/run_phase.py --sample-mode` لإنتاج أحدث snapshots.

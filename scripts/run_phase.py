@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict
-from datetime import date
+from datetime import date, datetime, timezone
 import json
 from pathlib import Path
 import sys
@@ -21,6 +21,14 @@ from kw_mi_os.governance import governance_outputs
 from kw_mi_os.historical_snapshot import build_historical_snapshot
 from kw_mi_os.ingestion import default_source_catalog, fetch_json
 from kw_mi_os.learning import build_learning_records, learning_records_to_json
+from kw_mi_os.market_data import (
+    build_market_data_snapshot,
+    evaluate_market_data_quality,
+    fetch_market_rows_from_source,
+    market_source_catalog,
+    normalize_and_map_market_rows,
+    write_market_data_artifacts,
+)
 from kw_mi_os.models import (
     AlertRecord,
     BenchmarkResult,
@@ -37,6 +45,9 @@ from kw_mi_os.models import (
     SignalInput,
     SourceClass,
     SourceEvidenceRecord,
+    MarketDataRow,
+    MarketSourceClass,
+    MarketSourceStatus,
 )
 from kw_mi_os.phase4 import (
     build_benchmark_result,
@@ -109,6 +120,10 @@ from kw_mi_os.validation import (
     validate_rollout_history,
     validate_rollout_metadata,
     validate_signoff_recommendation,
+    validate_market_data_snapshot,
+    validate_market_data_rows,
+    validate_market_quality_report,
+    validate_market_source_statuses,
 )
 
 
@@ -133,12 +148,13 @@ def _load_prior_snapshot(path: Path) -> PortfolioSnapshot | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9', 'phase10', 'market_data'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
     mode = 'sample' if args.sample_mode else args.mode
-    contract = PHASE_CONTRACTS[args.phase]
+    selected_phase = 'phase10' if args.phase == 'market_data' else args.phase
+    contract = PHASE_CONTRACTS[selected_phase]
 
     universe_file = ROOT / 'config/kuwait_equities_master.csv'
     quarterly_file = ROOT / 'data/quarterly_history.csv'
@@ -223,7 +239,7 @@ def main() -> int:
     benchmark = None
     decision_quality = None
     calibrated_signals = []
-    if args.phase in {'all', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}:
+    if selected_phase in {'all', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}:
         snapshot = build_historical_snapshot(
             snapshot_id=phase3_snapshot_id,
             as_of_date=date.fromisoformat('2026-04-10'),
@@ -293,7 +309,7 @@ def main() -> int:
             'source_growth_schema',
         ])
 
-    if args.phase in {'all', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}:
+    if selected_phase in {'all', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8'}:
         calibration_metadata, calibrated_signals = calibrate_signals(phase3_snapshot_id, phase3_outcomes)
         validate_calibration_metadata(calibration_metadata)
         validate_calibrated_signals(calibrated_signals)
@@ -339,7 +355,7 @@ def main() -> int:
             'phase4_decision_quality_schema',
         ])
 
-    if args.phase in {'all', 'phase5', 'phase6', 'phase7', 'phase8'}:
+    if selected_phase in {'all', 'phase5', 'phase6', 'phase7', 'phase8'}:
         if benchmark is None or decision_quality is None:
             raise ValueError('phase5 requires phase4 outputs')
 
@@ -423,7 +439,7 @@ def main() -> int:
             'phase5_snapshot_compatibility',
         ])
 
-    if args.phase in {'all', 'phase6', 'phase7', 'phase8'}:
+    if selected_phase in {'all', 'phase6', 'phase7', 'phase8'}:
         current_failures = []
         if internet_status != 'ok':
             current_failures.append('network_unavailable')
@@ -484,7 +500,7 @@ def main() -> int:
             'phase6_operating_status_schema',
         ])
 
-    if args.phase in {'all', 'phase7', 'phase8'}:
+    if selected_phase in {'all', 'phase7', 'phase8'}:
         phase7_inputs = [
             ROOT / 'runtime' / 'latest' / 'operating_status_latest.json',
             ROOT / 'runtime' / 'latest' / 'health_status_latest.json',
@@ -613,7 +629,7 @@ def main() -> int:
             'phase7_consolidated_report_schema',
         ])
 
-    if args.phase in {'all', 'phase8', 'phase9'}:
+    if selected_phase in {'all', 'phase8', 'phase9'}:
         phase8_inputs = [
             ROOT / 'runtime' / 'latest' / 'operating_status_latest.json',
             ROOT / 'runtime' / 'latest' / 'health_status_latest.json',
@@ -734,7 +750,7 @@ def main() -> int:
             'phase8_rollout_metadata_schema',
         ])
 
-    if args.phase in {'all', 'phase9'}:
+    if selected_phase in {'all', 'phase9'}:
         bundle, csv_specs, markdown = build_daily_export_bundle(root=ROOT, mode=mode)
         validate_daily_export_bundle(bundle)
         validate_export_metadata(bundle.export_metadata)
@@ -753,17 +769,80 @@ def main() -> int:
             'phase9_contradiction_rejection',
         ])
 
+    if selected_phase in {'all', 'phase10'}:
+        now_utc = datetime.now(timezone.utc) if mode == 'live' else datetime.fromisoformat('2026-04-10T15:00:00+00:00')
+        if mode == 'sample':
+            collected_rows = [
+                MarketDataRow('NBK', 'National Bank of Kuwait', '', 0.92, 0.01, 1.1, 1200000, 1104000.0, '2026-04-10', 'closed', 'sample_seed', MarketSourceClass.priority_1_official_market.value, 'sample://seed', '2026-04-10T15:00:00+00:00', 'sample:NBK'),
+                MarketDataRow('ZAIN', 'Mobile Telecommunications Company', '', 0.53, -0.005, -0.9, 900000, 477000.0, '2026-04-10', 'closed', 'sample_seed', MarketSourceClass.priority_1_official_market.value, 'sample://seed', '2026-04-10T15:00:00+00:00', 'sample:ZAIN'),
+            ]
+            source_statuses = [
+                MarketSourceStatus(
+                    source_name='sample_seed',
+                    source_class=MarketSourceClass.priority_1_official_market.value,
+                    attempted=True,
+                    success=True,
+                    rows_fetched=2,
+                    error=None,
+                    fallback_used=False,
+                    notes='deterministic_sample_mode',
+                )
+            ]
+        else:
+            sources = market_source_catalog()
+            collected_rows = []
+            source_statuses = []
+            for source in sorted(sources, key=lambda row: row.fallback_priority):
+                source_rows, source_status = fetch_market_rows_from_source(source, tradable, now_utc)
+                source_statuses.append(source_status)
+                if source_rows:
+                    collected_rows.extend(source_rows)
+                    if source.fallback_priority == 1:
+                        break
+
+        normalized_rows, unresolved_errors = normalize_and_map_market_rows(collected_rows, tradable)
+        quality = evaluate_market_data_quality(
+            rows=normalized_rows,
+            source_statuses=source_statuses,
+            unresolved_errors=unresolved_errors,
+            now_utc=now_utc,
+        )
+        validate_market_source_statuses(source_statuses)
+        validate_market_quality_report(quality)
+        if quality.ready_for_downstream:
+            validate_market_data_rows(normalized_rows)
+
+        snapshot = build_market_data_snapshot(
+            rows=normalized_rows,
+            quality=quality,
+            source_statuses=source_statuses,
+            mode=mode,
+            now_utc=now_utc,
+        )
+        validate_market_data_snapshot(snapshot)
+        written = write_market_data_artifacts(ROOT, snapshot)
+        files_written.extend(written)
+        validations.extend([
+            'phase10_market_source_status_schema',
+            'phase10_market_quality_schema',
+            'phase10_market_snapshot_schema',
+        ])
+        if not quality.ready_for_downstream:
+            warnings.append('phase10_market_data_not_ready_for_downstream')
+        if not quality.primary_source_ok:
+            warnings.append('phase10_primary_source_unavailable_fallback_used')
+
     checksums = {
         'config/kuwait_equities_master.csv': sha256_of_text(universe_file.read_text(encoding='utf-8')),
         'data/quarterly_history.csv': sha256_of_text(quarterly_file.read_text(encoding='utf-8')),
     }
 
-    if mode == 'live' and args.phase in {'all', 'phase5'}:
+    if mode == 'live' and selected_phase in {'all', 'phase5'}:
         warnings.append('phase5_live_requires_external_portfolio_execution_inputs_fallback_only')
 
     manifest = RunManifest(
         mode=mode,
-        phase=args.phase,
+        phase=selected_phase,
         internet_fetch_status=internet_status,
         files_read=list(contract.reads),
         files_written=files_written,
@@ -779,7 +858,7 @@ def main() -> int:
     semantics_path = ROOT / 'runtime' / 'quality' / 'runtime_semantics.json'
     semantics_path.write_text(json.dumps(RUNTIME_SEMANTICS, indent=2), encoding='utf-8')
 
-    print(f'run_phase: mode={mode} phase={args.phase} candidates={len(candidates)} exclusions={len(exclusions)} internet={internet_status}')
+    print(f'run_phase: mode={mode} phase={selected_phase} candidates={len(candidates)} exclusions={len(exclusions)} internet={internet_status}')
     return 0
 
 
