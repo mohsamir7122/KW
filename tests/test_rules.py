@@ -1,5 +1,5 @@
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 import json
 import subprocess
 import sys
@@ -17,6 +17,12 @@ from kw_mi_os.governance import governance_outputs
 from kw_mi_os.historical_snapshot import build_historical_snapshot
 from kw_mi_os.ingestion import FetchResult, SourceCatalogEntry, fetch_json
 from kw_mi_os.learning import build_learning_records
+from kw_mi_os.market_data import (
+    evaluate_market_data_quality,
+    fetch_market_rows_from_source,
+    market_source_catalog,
+    normalize_and_map_market_rows,
+)
 from kw_mi_os.models import (
     AlertRecord,
     CalibratedSignalRecord,
@@ -32,6 +38,10 @@ from kw_mi_os.models import (
     PortfolioProposal,
     PortfolioQualityReport,
     PortfolioSnapshot,
+    MarketDataRow,
+    MarketSourceCatalogEntry,
+    MarketSourceClass,
+    MarketSourceStatus,
     RebalanceAction,
     RiskControlCheck,
     RiskControlResult,
@@ -104,6 +114,9 @@ from kw_mi_os.validation import (
     validate_export_metadata,
     validate_csv_export,
     validate_markdown_summary,
+    validate_market_data_rows,
+    validate_market_quality_report,
+    validate_market_source_statuses,
     validate_health_status_report,
     validate_universe,
 )
@@ -155,7 +168,7 @@ def test_ranking_no_double_counting_of_trust():
 
 
 def test_phase_contracts_defined_and_idempotent():
-    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'}
+    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9', 'phase10'}
     assert all(v.idempotent for v in PHASE_CONTRACTS.values())
     assert PHASE_CONTRACTS['phase3'].outputs
     assert PHASE_CONTRACTS['phase4'].outputs
@@ -164,6 +177,7 @@ def test_phase_contracts_defined_and_idempotent():
     assert PHASE_CONTRACTS['phase7'].outputs
     assert PHASE_CONTRACTS['phase8'].outputs
     assert PHASE_CONTRACTS['phase9'].outputs
+    assert PHASE_CONTRACTS['phase10'].outputs
 
 
 def test_historical_snapshot_validation_and_point_in_time_behavior():
@@ -717,3 +731,149 @@ def test_phase9_export_validation_fail_closed():
         )
     with pytest.raises(ValueError):
         validate_phase9_required_inputs([ROOT / 'runtime/latest/not_present_phase9.json'])
+
+
+def test_market_data_normalization_and_unresolved_symbol_rejection():
+    universe = load_tradable_universe(ROOT / 'config/kuwait_equities_master.csv')
+    rows = [
+        MarketDataRow(
+            symbol='NBK.KW',
+            company_name='National Bank of Kuwait',
+            canonical_entity_id='',
+            last_price=0.9,
+            price_change=0.01,
+            percent_change=1.1,
+            volume=1000,
+            value_traded=900.0,
+            session_date='2026-04-10',
+            market_status='open',
+            source_name='x',
+            source_class=MarketSourceClass.priority_1_official_market.value,
+            source_url='https://example.com',
+            fetched_at_utc='2026-04-10T10:00:00+00:00',
+            source_trace_id='trace-1',
+        ),
+        MarketDataRow(
+            symbol='UNKNOWN',
+            company_name='Unknown',
+            canonical_entity_id='',
+            last_price=1.0,
+            price_change=None,
+            percent_change=None,
+            volume=None,
+            value_traded=None,
+            session_date='2026-04-10',
+            market_status='open',
+            source_name='x',
+            source_class=MarketSourceClass.priority_1_official_market.value,
+            source_url='https://example.com',
+            fetched_at_utc='2026-04-10T10:00:00+00:00',
+            source_trace_id='trace-2',
+        ),
+    ]
+    normalized, unresolved = normalize_and_map_market_rows(rows, universe)
+    assert len(normalized) == 1
+    assert normalized[0].canonical_entity_id == 'KW:NBK'
+    assert unresolved and unresolved[0].startswith('unresolved_symbol')
+
+
+def test_market_data_duplicate_and_stale_rejection():
+    now_utc = datetime.fromisoformat('2026-04-10T15:00:00+00:00')
+    row = MarketDataRow(
+        symbol='NBK',
+        company_name='NBK',
+        canonical_entity_id='KW:NBK',
+        last_price=0.8,
+        price_change=0.0,
+        percent_change=0.0,
+        volume=10,
+        value_traded=8.0,
+        session_date='2026-04-09',
+        market_status='closed',
+        source_name='x',
+        source_class=MarketSourceClass.priority_1_official_market.value,
+        source_url='https://example.com',
+        fetched_at_utc='2026-04-08T01:00:00+00:00',
+        source_trace_id='trace-old',
+    )
+    source_status = MarketSourceStatus(
+        source_name='x',
+        source_class=MarketSourceClass.priority_1_official_market.value,
+        attempted=True,
+        success=True,
+        rows_fetched=2,
+        error=None,
+        fallback_used=False,
+        notes='ok',
+    )
+    quality = evaluate_market_data_quality([row, row], [source_status], [], now_utc)
+    assert 'duplicate_rows' in quality.validation_failures
+    assert 'stale_data' in quality.validation_failures
+    assert quality.ready_for_downstream is False
+
+
+def test_market_data_empty_source_and_fallback_status():
+    now_utc = datetime.fromisoformat('2026-04-10T15:00:00+00:00')
+    source_status = MarketSourceStatus(
+        source_name='yahoo_finance_quote',
+        source_class=MarketSourceClass.priority_3_secondary_market_data.value,
+        attempted=True,
+        success=False,
+        rows_fetched=0,
+        error='network',
+        fallback_used=True,
+        notes='failed',
+    )
+    quality = evaluate_market_data_quality([], [source_status], [], now_utc)
+    validate_market_source_statuses([source_status])
+    validate_market_quality_report(quality)
+    assert 'empty_source_response' in quality.validation_failures
+    assert quality.ready_for_downstream is False
+
+
+def test_market_data_artifact_publication_and_manifest_enrichment():
+    subprocess.check_call(['python', 'scripts/run_phase.py', '--sample-mode', '--phase', 'phase10'])
+    required = [
+        ROOT / 'runtime/latest/market_data_snapshot.json',
+        ROOT / 'runtime/latest/market_data_table.csv',
+        ROOT / 'runtime/quality/market_data_quality_report.json',
+        ROOT / 'runtime/quality/market_source_report.json',
+        ROOT / 'reports/market_data_summary.md',
+        ROOT / 'reports/market_data_snapshot_latest.json',
+        ROOT / 'reports/market_data_table_latest.csv',
+        ROOT / 'runtime/latest/run_manifest.json',
+    ]
+    for path in required:
+        assert path.exists()
+    manifest = json.loads((ROOT / 'runtime/latest/run_manifest.json').read_text(encoding='utf-8'))
+    assert 'phase10_market_snapshot_schema' in manifest['validations']
+
+
+def test_market_source_catalog_and_fetch_network_fallback(monkeypatch):
+    catalog = market_source_catalog()
+    assert catalog[0].source_class == MarketSourceClass.priority_1_official_market
+
+    def fake_urlopen(*args, **kwargs):  # noqa: ARG001
+        raise OSError('network down')
+
+    import kw_mi_os.market_data as market_data
+
+    monkeypatch.setattr(market_data, 'urlopen', fake_urlopen)
+    rows, status = fetch_market_rows_from_source(
+        MarketSourceCatalogEntry(
+            source_name='boursa_kuwait_market_watch',
+            source_class=MarketSourceClass.priority_1_official_market,
+            expected_reliability='high',
+            expected_freshness='intraday',
+            parsing_notes='x',
+            login_notes='x',
+            allowed_use='price_source_of_truth',
+            fallback_priority=1,
+            url='https://example.com',
+            timeout_sec=1,
+        ),
+        load_tradable_universe(ROOT / 'config/kuwait_equities_master.csv'),
+        datetime.fromisoformat('2026-04-10T15:00:00+00:00'),
+    )
+    assert rows == []
+    assert status.success is False
