@@ -591,3 +591,86 @@ def validate_csv_export(path: Path, required_headers: list[str]) -> None:
         for index, row in enumerate(reader, start=2):
             if set(row.keys()) != set(required_headers):
                 raise ValueError(f'csv row/column mismatch for {path} at line {index}')
+
+
+def validate_learning_dataset_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    required = {
+        'canonical_entity_id', 'symbol', 'as_of_date', 'raw_signal', 'calibrated_signal', 'trust_score',
+        'governance_signal', 'decision_quality', 'benchmark_context', 'portfolio_weight', 'rebalance_delta',
+        'alert_count', 'health_flag', 'source_confidence', 'label_return_1d', 'label_return_5d',
+        'label_return_20d', 'label_up_1d', 'label_up_5d', 'label_up_20d',
+    }
+    for row in rows:
+        missing = required - set(row.keys())
+        if missing:
+            raise ValueError(f'learning dataset schema missing fields: {sorted(missing)}')
+        if not str(row['canonical_entity_id']).startswith('KW:'):
+            raise ValueError('learning row canonical_entity_id must start with KW:')
+    return rows
+
+
+def validate_temporal_split_integrity(split: dict[str, list[dict[str, object]]]) -> dict[str, list[dict[str, object]]]:
+    train = split.get('train', [])
+    validation = split.get('validation', [])
+    test = split.get('test', [])
+    if not train:
+        raise ValueError('temporal split requires non-empty train set')
+    train_dates = [str(r['as_of_date']) for r in train]
+    val_dates = [str(r['as_of_date']) for r in validation]
+    test_dates = [str(r['as_of_date']) for r in test]
+    if validation and max(train_dates) > min(val_dates):
+        raise ValueError('temporal leakage: train overlaps validation')
+    if test and validation and max(val_dates) > min(test_dates):
+        raise ValueError('temporal leakage: validation overlaps test')
+    if test and not validation and max(train_dates) > min(test_dates):
+        raise ValueError('temporal leakage: train overlaps test')
+    return split
+
+
+def validate_leakage_prevention(feature_rows: list[dict[str, object]], label_rows: list[dict[str, object]]) -> None:
+    if len(feature_rows) != len(label_rows):
+        raise ValueError('feature/label row count mismatch')
+    for feat, lab in zip(feature_rows, label_rows):
+        for key in feat.keys():
+            if key.startswith('label_'):
+                raise ValueError(f'feature leakage detected: {key}')
+        if feat['symbol'] != lab['symbol'] or feat['as_of_date'] != lab['as_of_date']:
+            raise ValueError('feature/label entity join mismatch')
+
+
+def validate_registry_record(record: dict[str, object]) -> dict[str, object]:
+    required = {
+        'model_version', 'role', 'target_horizon', 'training_window', 'feature_schema_hash', 'calibration_metadata',
+        'evaluation_metrics', 'acceptance_decision', 'promoted', 'status', 'reasons',
+    }
+    missing = required - set(record.keys())
+    if missing:
+        raise ValueError(f'model registry record missing fields: {sorted(missing)}')
+    if bool(record['promoted']):
+        raise ValueError('phase11 forbids auto-promotion')
+    acceptance = dict(record['acceptance_decision'])
+    if bool(acceptance.get('accepted')) and bool(record['promoted']):
+        raise ValueError('accepted challenger cannot be promoted automatically')
+    return record
+
+
+def validate_drift_report(report: dict[str, object]) -> dict[str, object]:
+    required = {
+        'status', 'feature_drift', 'label_drift', 'source_drift', 'calibration_degradation',
+        'quality_decay', 'retraining_recommendation', 'reasons',
+    }
+    missing = required - set(report.keys())
+    if missing:
+        raise ValueError(f'drift report missing fields: {sorted(missing)}')
+    return report
+
+
+def validate_acceptance_consistency(record: dict[str, object]) -> dict[str, object]:
+    acceptance = dict(record.get('acceptance_decision', {}))
+    gates = dict(acceptance.get('gates', {}))
+    accepted = bool(acceptance.get('accepted', False))
+    if accepted and not all(bool(v) for v in gates.values()):
+        raise ValueError('acceptance inconsistency: accepted with failed gates')
+    if not accepted and record.get('status') == 'accepted_pending_manual_gate':
+        raise ValueError('acceptance inconsistency: rejected marked accepted')
+    return record

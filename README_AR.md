@@ -100,6 +100,26 @@ python scripts/type_check.py
 pytest -q
 ```
 
+## Phase 11 — Learning, Validation, and Adaptive Improvement Engine
+- تمت إضافة محرك تعلم منفصل يبني datasets supervision من قرارات تاريخية + outcomes مُلاحظة عبر horizons: `1d/5d/20d`.
+- artifacts الجديدة تشمل:
+  - `runtime/learning/feature_store_latest.json`
+  - `runtime/learning/label_store_latest.json`
+  - `runtime/learning/training_dataset_latest.csv`
+  - `runtime/learning/validation_dataset_latest.csv`
+  - `runtime/learning/test_dataset_latest.csv`
+  - `runtime/learning/model_registry_latest.json`
+  - `runtime/quality/model_evaluation_report.json`
+  - `runtime/quality/challenger_acceptance_report.json`
+  - `runtime/quality/drift_monitoring_report.json`
+  - `runtime/latest/learning_decision_latest.json`
+  - `runtime/latest/champion_model_status.json`
+- Champion/Challenger policy: النظام يدرب **challenger فقط**، ويمنع auto-promotion بالكامل (`promoted=false` دائمًا في Phase 11).
+- Acceptance gates صريحة: predictive/calibration/stability/turnover proxy/benchmark lift/coverage.
+- drift-aware policy مضافة: feature drift + label drift + source drift + calibration degradation + quality decay مع قرارات `retrain` أو `recalibrate` أو `monitor/reject`.
+- Fail-closed safeguards: dataset schema, temporal split integrity, leakage prevention, registry schema, acceptance consistency, drift report structure.
+- إذا البيانات غير كافية للتدريب، النظام يرفض الترويج ويفشل بشكل آمن دون ادعاء نجاح.
+
 ## التشغيل المجدول (GitHub Actions)
 - workflow `.github/workflows/market-intelligence-os.yml` يدعم:
   - `workflow_dispatch` للتشغيل اليدوي (sample/live + phase override حتى `phase9`).

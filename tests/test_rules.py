@@ -44,6 +44,17 @@ from kw_mi_os.models import (
 )
 from kw_mi_os.phase8 import append_rollout_history, build_daily_rollout_report, build_operator_verdict, build_rollout_metadata, build_signoff_recommendation
 from kw_mi_os.phase9 import build_daily_export_bundle, validate_phase9_required_inputs, write_daily_exports
+from kw_mi_os.phase11 import (
+    build_drift_report,
+    build_feature_label_store,
+    build_learning_rows_from_history,
+    evaluate_acceptance,
+    evaluate_predictions,
+    generate_sample_decision_history,
+    score_rows,
+    temporal_split,
+    train_challenger,
+)
 from kw_mi_os.phase4 import (
     build_benchmark_result,
     build_decision_quality_report,
@@ -106,6 +117,12 @@ from kw_mi_os.validation import (
     validate_markdown_summary,
     validate_health_status_report,
     validate_universe,
+    validate_acceptance_consistency,
+    validate_drift_report,
+    validate_leakage_prevention,
+    validate_learning_dataset_rows,
+    validate_registry_record,
+    validate_temporal_split_integrity,
 )
 
 
@@ -155,7 +172,7 @@ def test_ranking_no_double_counting_of_trust():
 
 
 def test_phase_contracts_defined_and_idempotent():
-    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'}
+    assert set(PHASE_CONTRACTS.keys()) == {'all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9', 'phase11'}
     assert all(v.idempotent for v in PHASE_CONTRACTS.values())
     assert PHASE_CONTRACTS['phase3'].outputs
     assert PHASE_CONTRACTS['phase4'].outputs
@@ -164,6 +181,7 @@ def test_phase_contracts_defined_and_idempotent():
     assert PHASE_CONTRACTS['phase7'].outputs
     assert PHASE_CONTRACTS['phase8'].outputs
     assert PHASE_CONTRACTS['phase9'].outputs
+    assert PHASE_CONTRACTS['phase11'].outputs
 
 
 def test_historical_snapshot_validation_and_point_in_time_behavior():
@@ -306,6 +324,17 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
         ROOT / 'reports/alerts_latest.csv',
         ROOT / 'reports/operating_status_latest.csv',
         ROOT / 'reports/export_metadata.json',
+        ROOT / 'runtime/learning/feature_store_latest.json',
+        ROOT / 'runtime/learning/label_store_latest.json',
+        ROOT / 'runtime/learning/training_dataset_latest.csv',
+        ROOT / 'runtime/learning/validation_dataset_latest.csv',
+        ROOT / 'runtime/learning/test_dataset_latest.csv',
+        ROOT / 'runtime/learning/model_registry_latest.json',
+        ROOT / 'runtime/quality/model_evaluation_report.json',
+        ROOT / 'runtime/quality/challenger_acceptance_report.json',
+        ROOT / 'runtime/quality/drift_monitoring_report.json',
+        ROOT / 'runtime/latest/learning_decision_latest.json',
+        ROOT / 'runtime/latest/champion_model_status.json',
         ROOT / 'runtime/latest/run_manifest.json',
     ]
     for p in required:
@@ -318,8 +347,46 @@ def test_run_phase_publishes_required_artifacts_and_manifest_enrichment():
     assert 'phase5_alert_schema' in manifest['validations']
     assert 'phase6_operating_status_schema' in manifest['validations']
     assert 'phase7_consolidated_report_schema' in manifest['validations']
-    assert 'phase8_daily_rollout_schema' in manifest['validations']
-    assert 'phase9_daily_export_bundle_schema' in manifest['validations']
+    assert 'phase11_learning_dataset_schema' in manifest['validations']
+
+
+def test_phase11_temporal_split_leakage_registry_and_drift():
+    history = generate_sample_decision_history(periods=16)
+    rows = build_learning_rows_from_history(decision_history=history)
+    row_dicts = [r.__dict__ for r in rows]
+    validate_learning_dataset_rows(row_dicts)
+
+    split = temporal_split(rows)
+    split_dict = {k: [r.__dict__ for r in v] for k, v in split.items()}
+    validate_temporal_split_integrity(split_dict)
+
+    feature_rows, label_rows, schema_hash = build_feature_label_store(rows)
+    validate_leakage_prevention(feature_rows, label_rows)
+    assert schema_hash
+
+    model = train_challenger(split['train'])
+    probs = score_rows(model, split['test'])
+    metrics = evaluate_predictions(split['test'], probs)
+    acceptance = evaluate_acceptance(metrics)
+    registry = {
+        'model_version': 'challenger_x',
+        'role': 'challenger',
+        'target_horizon': '5d',
+        'training_window': {'start': split['train'][0].as_of_date, 'end': split['train'][-1].as_of_date, 'samples': len(split['train'])},
+        'feature_schema_hash': schema_hash,
+        'calibration_metadata': {'tested': True},
+        'evaluation_metrics': metrics,
+        'acceptance_decision': acceptance,
+        'promoted': False,
+        'status': 'rejected',
+        'reasons': ['gate_failed'],
+    }
+    validate_registry_record(registry)
+    validate_acceptance_consistency(registry)
+
+    drift = build_drift_report(train_rows=split['train'], test_rows=split['test'], metrics=metrics)
+    validate_drift_report(drift)
+    assert drift['retraining_recommendation'] in {'retrain_model', 'recalibrate_model', 'monitor_only', 'reject_retraining_insufficient_coverage'}
 
 
 def test_phase4_outputs_validate_from_sample_outcomes():

@@ -40,6 +40,7 @@
 - Phase 7 reporting is consume-and-summarize only; it never mutates ranking, portfolio construction, risk controls, or monitoring state.
 - Phase 8 rollout automation is consume-and-review only; it never mutates ranking, portfolio, monitoring, or dashboard production logic.
 - Phase 9 export layer is consume-and-export only; it never mutates ranking, portfolio, monitoring, reporting, or rollout semantics.
+- Phase 11 learning engine is consume-and-evaluate only; it never auto-promotes models or self-modifies production decisions.
 
 ## End-to-end flow (`run_phase.py --sample-mode`)
 1. Validate universe + quarterly inputs.
@@ -73,6 +74,9 @@
 29. Publish Phase 8 latest/quality/learning artifacts and enrich run manifest with Phase 8 validations.
 30. Build Phase 9 daily export bundle from validated latest artifacts.
 31. Publish Phase 9 JSON + CSV + Markdown artifacts into `reports/` and enrich run manifest with export validations.
+32. Build Phase 11 learning datasets (feature/label stores + temporal train/validation/test splits).
+33. Train interpretable challenger baseline and evaluate against explicit acceptance gates.
+34. Produce champion/challenger registry + drift/retraining recommendation artifacts (manual promotion only).
 
 ## Evaluation limitations (explicit by design)
 - This is walk-forward scaffolding, not a full institutional backtester.
@@ -123,11 +127,21 @@
 - `reports/alerts_latest.csv`: tabular latest alert feed export.
 - `reports/operating_status_latest.csv`: tabular operating/health status snapshot export.
 - `reports/export_metadata.json`: export timestamp/source manifest/mode/phase coverage/exported files/limitations/version.
+- `runtime/learning/feature_store_latest.json`: learning-ready feature table snapshot and schema hash.
+- `runtime/learning/label_store_latest.json`: horizon labels (`1d/5d/20d`) linked by entity/date.
+- `runtime/learning/training_dataset_latest.csv`, `validation_dataset_latest.csv`, `test_dataset_latest.csv`: deterministic temporal splits.
+- `runtime/learning/model_registry_latest.json`: champion/challenger metadata with acceptance decision and promotion status.
+- `runtime/quality/model_evaluation_report.json`: challenger training metadata + validation/test metrics.
+- `runtime/quality/challenger_acceptance_report.json`: explicit gate outcomes and rejection/acceptance reasons.
+- `runtime/quality/drift_monitoring_report.json`: feature/label/source drift and retrain/recalibrate recommendations.
+- `runtime/latest/learning_decision_latest.json`: latest learning action decision (manual review, no auto promotion).
+- `runtime/latest/champion_model_status.json`: champion availability and manual-only promotion mode.
 
 ## Remaining later-phase work
 - richer multi-horizon outcome windows and event-aligned attribution.
 - broader evidence classes and live source adapters.
 - model training/selection pipelines built on Phase 3 learning records.
+- production-grade model registry serving/promotion workflow with human sign-off UX (manual gate remains intentional).
 - live brokerage execution (intentionally out of scope for this repo phase set).
 - cross-repository/stateful persistence beyond runtime artifacts (outside current repo-native scope).
 - PowerPoint generation (intentionally out of scope in Phase 9; exports are JSON + CSV + Markdown only).
