@@ -62,6 +62,18 @@ from kw_mi_os.phase8 import (
     build_signoff_recommendation,
 )
 from kw_mi_os.phase9 import build_daily_export_bundle, write_daily_exports
+from kw_mi_os.phase11 import (
+    build_drift_report,
+    build_feature_label_store,
+    build_learning_rows_from_history,
+    build_registry_record,
+    evaluate_acceptance,
+    evaluate_predictions,
+    generate_sample_decision_history,
+    score_rows,
+    temporal_split,
+    train_challenger,
+)
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
@@ -109,6 +121,12 @@ from kw_mi_os.validation import (
     validate_rollout_history,
     validate_rollout_metadata,
     validate_signoff_recommendation,
+    validate_learning_dataset_rows,
+    validate_temporal_split_integrity,
+    validate_leakage_prevention,
+    validate_registry_record,
+    validate_drift_report,
+    validate_acceptance_consistency,
 )
 
 
@@ -133,7 +151,7 @@ def _load_prior_snapshot(path: Path) -> PortfolioSnapshot | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9', 'phase11'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
@@ -734,7 +752,7 @@ def main() -> int:
             'phase8_rollout_metadata_schema',
         ])
 
-    if args.phase in {'all', 'phase9'}:
+    if args.phase in {'all', 'phase9', 'phase11'}:
         bundle, csv_specs, markdown = build_daily_export_bundle(root=ROOT, mode=mode)
         validate_daily_export_bundle(bundle)
         validate_export_metadata(bundle.export_metadata)
@@ -751,6 +769,125 @@ def main() -> int:
             'phase9_markdown_summary_sections',
             'phase9_csv_consistency',
             'phase9_contradiction_rejection',
+        ])
+
+    if args.phase in {'all', 'phase11'}:
+        history_path = ROOT / 'runtime' / 'learning' / 'decision_outcome_history.json'
+        if mode == 'sample':
+            history = generate_sample_decision_history()
+            history_path.write_text(json.dumps(history, indent=2), encoding='utf-8')
+            files_written.append(str(history_path))
+        else:
+            history = json.loads(history_path.read_text(encoding='utf-8')) if history_path.exists() else []
+
+        learning_rows = build_learning_rows_from_history(decision_history=history)
+        learning_rows_dict = [asdict(r) for r in learning_rows]
+        validate_learning_dataset_rows(learning_rows_dict)
+
+        feature_rows, label_rows, schema_hash = build_feature_label_store(learning_rows)
+        validate_leakage_prevention(feature_rows, label_rows)
+
+        split_rows = temporal_split(learning_rows)
+        split_dict = {k: [asdict(r) for r in v] for k, v in split_rows.items()}
+        validate_temporal_split_integrity(split_dict)
+
+        model = train_challenger(split_rows['train'])
+        val_probs = score_rows(model, split_rows['validation'])
+        test_probs = score_rows(model, split_rows['test'])
+        val_metrics = evaluate_predictions(split_rows['validation'], val_probs)
+        test_metrics = evaluate_predictions(split_rows['test'], test_probs)
+        metrics = {
+            'validation': val_metrics,
+            'test': test_metrics,
+            'coverage': test_metrics.get('coverage', 0.0),
+            'accuracy': test_metrics.get('accuracy', 0.0),
+            'brier': test_metrics.get('brier', 1.0),
+            'calibration_error': test_metrics.get('calibration_error', 1.0),
+            'stability_gap': test_metrics.get('stability_gap', 1.0),
+            'turnover_proxy': test_metrics.get('turnover_proxy', 1.0),
+            'benchmark_lift': test_metrics.get('benchmark_lift', -1.0),
+            'missingness_rate': test_metrics.get('missingness_rate', 1.0),
+        }
+
+        acceptance = evaluate_acceptance(metrics)
+        registry_entry = build_registry_record(
+            model=model,
+            metrics=metrics,
+            acceptance=acceptance,
+            schema_hash=schema_hash,
+            train_rows=split_rows['train'],
+        )
+        validate_registry_record(registry_entry)
+        validate_acceptance_consistency(registry_entry)
+
+        drift_report = build_drift_report(train_rows=split_rows['train'], test_rows=split_rows['test'], metrics=metrics)
+        validate_drift_report(drift_report)
+
+        training_csv = ROOT / 'runtime' / 'learning' / 'training_dataset_latest.csv'
+        validation_csv = ROOT / 'runtime' / 'learning' / 'validation_dataset_latest.csv'
+        test_csv = ROOT / 'runtime' / 'learning' / 'test_dataset_latest.csv'
+        feature_store_path = ROOT / 'runtime' / 'learning' / 'feature_store_latest.json'
+        label_store_path = ROOT / 'runtime' / 'learning' / 'label_store_latest.json'
+        model_registry_path = ROOT / 'runtime' / 'learning' / 'model_registry_latest.json'
+        model_eval_path = ROOT / 'runtime' / 'quality' / 'model_evaluation_report.json'
+        acceptance_path = ROOT / 'runtime' / 'quality' / 'challenger_acceptance_report.json'
+        drift_path = ROOT / 'runtime' / 'quality' / 'drift_monitoring_report.json'
+        learning_decision_latest_path = ROOT / 'runtime' / 'latest' / 'learning_decision_latest.json'
+        champion_status_path = ROOT / 'runtime' / 'latest' / 'champion_model_status.json'
+
+        def _write_csv(path: Path, rows: list[dict[str, object]]) -> None:
+            import csv
+            keys = list(rows[0].keys()) if rows else []
+            with path.open('w', encoding='utf-8', newline='') as handle:
+                writer = csv.DictWriter(handle, fieldnames=keys)
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow(row)
+
+        _write_csv(training_csv, split_dict['train'])
+        _write_csv(validation_csv, split_dict['validation'])
+        _write_csv(test_csv, split_dict['test'])
+        feature_store_path.write_text(json.dumps({'schema_hash': schema_hash, 'rows': feature_rows}, indent=2), encoding='utf-8')
+        label_store_path.write_text(json.dumps({'horizons': [1, 5, 20], 'rows': label_rows}, indent=2), encoding='utf-8')
+        model_registry_path.write_text(json.dumps({'champion': None, 'challengers': [registry_entry]}, indent=2), encoding='utf-8')
+        model_eval_path.write_text(json.dumps({'model': model, 'metrics': metrics}, indent=2), encoding='utf-8')
+        acceptance_path.write_text(json.dumps(acceptance, indent=2), encoding='utf-8')
+        drift_path.write_text(json.dumps(drift_report, indent=2), encoding='utf-8')
+        learning_decision_latest_path.write_text(
+            json.dumps(
+                {
+                    'status': 'ready_for_manual_review' if acceptance['accepted'] else 'challenger_rejected',
+                    'auto_promotion_permitted': False,
+                    'retraining_recommendation': drift_report['retraining_recommendation'],
+                    'reasons': registry_entry['reasons'],
+                },
+                indent=2,
+            ),
+            encoding='utf-8',
+        )
+        champion_status_path.write_text(json.dumps({'champion_available': False, 'promotion_mode': 'manual_only'}, indent=2), encoding='utf-8')
+
+        files_written.extend([
+            str(training_csv),
+            str(validation_csv),
+            str(test_csv),
+            str(feature_store_path),
+            str(label_store_path),
+            str(model_registry_path),
+            str(model_eval_path),
+            str(acceptance_path),
+            str(drift_path),
+            str(learning_decision_latest_path),
+            str(champion_status_path),
+        ])
+        validations.extend([
+            'phase11_learning_dataset_schema',
+            'phase11_temporal_split_integrity',
+            'phase11_feature_label_leakage_prevention',
+            'phase11_model_registry_schema',
+            'phase11_acceptance_consistency',
+            'phase11_drift_report_schema',
+            'phase11_champion_challenger_consistency',
         ])
 
     checksums = {
