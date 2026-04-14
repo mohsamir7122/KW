@@ -35,6 +35,14 @@ from .models import (
     ExportMetadata,
     MarkdownSummary,
     OperatorVerdict,
+    Phase11AcceptanceGateResult,
+    Phase11ChallengerEvaluation,
+    Phase11Dataset,
+    Phase11DriftReport,
+    Phase11FeatureRecord,
+    Phase11LabelRecord,
+    Phase11ModelRegistryEntry,
+    Phase11RetrainingRecommendation,
     ReportingMetadata,
     RolloutHistory,
     RolloutMetadata,
@@ -641,3 +649,84 @@ def validate_market_data_snapshot(snapshot: MarketDataSnapshot) -> MarketDataSna
     if snapshot.quality.ready_for_downstream:
         validate_market_data_rows(snapshot.rows)
     return snapshot
+
+
+def validate_phase11_feature_store(records: list[Phase11FeatureRecord]) -> list[Phase11FeatureRecord]:
+    if not records:
+        raise ValueError('phase11 feature store cannot be empty')
+    for record in records:
+        if not record.symbol or not record.as_of_date:
+            raise ValueError('phase11 feature row missing symbol/as_of_date')
+        if not record.features:
+            raise ValueError('phase11 feature row requires features')
+    return records
+
+
+def validate_phase11_label_store(records: list[Phase11LabelRecord]) -> list[Phase11LabelRecord]:
+    if not records:
+        raise ValueError('phase11 label store cannot be empty')
+    required = {'label_1d', 'label_5d', 'label_20d'}
+    for record in records:
+        if set(record.labels.keys()) != required:
+            raise ValueError('phase11 label store requires 1d/5d/20d labels')
+    return records
+
+
+def validate_phase11_dataset(dataset: Phase11Dataset) -> Phase11Dataset:
+    if dataset.row_count < 3:
+        raise ValueError('phase11 dataset requires at least 3 rows')
+    if dataset.horizons != ('1d', '5d', '20d'):
+        raise ValueError('phase11 dataset horizons must be 1d/5d/20d')
+    for split in ('train', 'validation', 'test'):
+        if split not in dataset.temporal_split or not dataset.temporal_split[split]:
+            raise ValueError(f'phase11 dataset missing temporal split: {split}')
+    if not dataset.leakage_checks.get('label_keys_not_in_features', False):
+        raise ValueError('phase11 leakage check failed: label keys present in features')
+    if not dataset.leakage_checks.get('strict_time_order', False):
+        raise ValueError('phase11 leakage check failed: non-strict time order')
+    return dataset
+
+
+def validate_phase11_challenger_evaluation(report: Phase11ChallengerEvaluation) -> Phase11ChallengerEvaluation:
+    if report.evaluation_scope != 'challenger_only':
+        raise ValueError('phase11 evaluation must be challenger_only')
+    if report.return_lift != round(report.challenger_return - report.baseline_return, 6):
+        raise ValueError('phase11 challenger return_lift mismatch')
+    return report
+
+
+def validate_phase11_acceptance_gates(gates: Phase11AcceptanceGateResult) -> Phase11AcceptanceGateResult:
+    expected = gates.minimum_lift_passed and gates.directional_accuracy_passed and gates.max_drawdown_passed
+    if gates.accepted != expected:
+        raise ValueError('phase11 acceptance gates inconsistent')
+    return gates
+
+
+def validate_phase11_registry_entry(entry: Phase11ModelRegistryEntry) -> Phase11ModelRegistryEntry:
+    if entry.acceptance_status not in {'accepted', 'rejected'}:
+        raise ValueError('phase11 registry acceptance_status invalid')
+    if entry.auto_promotion:
+        raise ValueError('phase11 forbids auto_promotion')
+    if entry.promotion_state != 'manual_review_required':
+        raise ValueError('phase11 promotion_state must be manual_review_required')
+    return entry
+
+
+def validate_phase11_drift_report(report: Phase11DriftReport) -> Phase11DriftReport:
+    if report.max_feature_drift < 0:
+        raise ValueError('phase11 drift cannot be negative')
+    if not report.per_feature_drift:
+        raise ValueError('phase11 per_feature_drift cannot be empty')
+    return report
+
+
+def validate_phase11_retraining_recommendation(
+    recommendation: Phase11RetrainingRecommendation,
+) -> Phase11RetrainingRecommendation:
+    if recommendation.recommendation not in {'schedule_retraining', 'monitor_only'}:
+        raise ValueError('phase11 retraining recommendation invalid')
+    if recommendation.should_retrain and recommendation.recommendation != 'schedule_retraining':
+        raise ValueError('phase11 retraining recommendation mismatch')
+    if not recommendation.should_retrain and recommendation.recommendation != 'monitor_only':
+        raise ValueError('phase11 retraining recommendation mismatch')
+    return recommendation

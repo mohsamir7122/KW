@@ -729,3 +729,73 @@ class MarketDataSnapshot:
     quality: MarketDataQualityReport
     sources: list[MarketSourceStatus]
     metadata: MarketDataIngestionMetadata
+
+
+@dataclass(frozen=True)
+class Phase11FeatureRecord:
+    symbol: str
+    as_of_date: str
+    features: dict[str, float]
+
+
+@dataclass(frozen=True)
+class Phase11LabelRecord:
+    symbol: str
+    as_of_date: str
+    labels: dict[str, float]
+
+
+@dataclass(frozen=True)
+class Phase11Dataset:
+    dataset_id: str
+    row_count: int
+    horizons: tuple[str, str, str]
+    feature_keys: tuple[str, ...]
+    temporal_split: dict[str, list[str]]
+    leakage_checks: dict[str, bool]
+
+
+@dataclass(frozen=True)
+class Phase11ChallengerEvaluation:
+    challenger_id: str
+    evaluation_scope: str
+    baseline_return: float
+    challenger_return: float
+    return_lift: float
+    directional_accuracy: float
+    max_drawdown: float
+
+
+@dataclass(frozen=True)
+class Phase11AcceptanceGateResult:
+    minimum_lift_passed: bool
+    directional_accuracy_passed: bool
+    max_drawdown_passed: bool
+    accepted: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class Phase11ModelRegistryEntry:
+    model_id: str
+    dataset_id: str
+    acceptance_status: str
+    auto_promotion: bool
+    promotion_state: str
+    metadata: dict[str, object]
+
+
+@dataclass(frozen=True)
+class Phase11DriftReport:
+    monitor_id: str
+    dataset_id: str
+    max_feature_drift: float
+    per_feature_drift: dict[str, float]
+    drift_flag: bool
+
+
+@dataclass(frozen=True)
+class Phase11RetrainingRecommendation:
+    should_retrain: bool
+    recommendation: str
+    rationale: str

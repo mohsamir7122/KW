@@ -32,6 +32,7 @@ from kw_mi_os.market_data import (
 from kw_mi_os.models import (
     AlertRecord,
     BenchmarkResult,
+    CandidateOutcomeRecord,
     DecisionQualityReport,
     ExclusionRecord,
     FailureRecord,
@@ -73,6 +74,7 @@ from kw_mi_os.phase8 import (
     build_signoff_recommendation,
 )
 from kw_mi_os.phase9 import build_daily_export_bundle, write_daily_exports
+from kw_mi_os.phase11 import build_drift_and_retraining, build_learning_dataset, evaluate_challenger_only
 from kw_mi_os.phase_contracts import PHASE_CONTRACTS
 from kw_mi_os.runtime_semantics import RUNTIME_SEMANTICS
 from kw_mi_os.signal_engine import compute_signals
@@ -124,6 +126,14 @@ from kw_mi_os.validation import (
     validate_market_data_rows,
     validate_market_quality_report,
     validate_market_source_statuses,
+    validate_phase11_acceptance_gates,
+    validate_phase11_challenger_evaluation,
+    validate_phase11_dataset,
+    validate_phase11_drift_report,
+    validate_phase11_feature_store,
+    validate_phase11_label_store,
+    validate_phase11_registry_entry,
+    validate_phase11_retraining_recommendation,
 )
 
 
@@ -148,7 +158,7 @@ def _load_prior_snapshot(path: Path) -> PortfolioSnapshot | None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--mode', choices=['sample', 'live'], default='sample')
-    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9', 'phase10', 'market_data'], default='all')
+    parser.add_argument('--phase', choices=['all', 'ingest', 'score', 'phase3', 'phase4', 'phase5', 'phase6', 'phase7', 'phase8', 'phase9', 'phase10', 'phase11', 'market_data'], default='all')
     parser.add_argument('--sample-mode', action='store_true')
     args = parser.parse_args()
 
@@ -831,6 +841,75 @@ def main() -> int:
             warnings.append('phase10_market_data_not_ready_for_downstream')
         if not quality.primary_source_ok:
             warnings.append('phase10_primary_source_unavailable_fallback_used')
+
+    if selected_phase in {'all', 'phase11'}:
+        candidate_outcomes_path = ROOT / 'runtime' / 'learning' / 'candidate_outcomes.json'
+        if not candidate_outcomes_path.exists():
+            raise ValueError('phase11 requires runtime/learning/candidate_outcomes.json')
+
+        candidate_outcomes_data = json.loads(candidate_outcomes_path.read_text(encoding='utf-8'))
+        phase11_outcomes = validate_candidate_outcomes([CandidateOutcomeRecord(**row) for row in candidate_outcomes_data])
+
+        feature_store, label_store, dataset = build_learning_dataset(quarterly_records)
+        validate_phase11_feature_store(feature_store)
+        validate_phase11_label_store(label_store)
+        validate_phase11_dataset(dataset)
+
+        challenger_eval, gate_results, registry_entry = evaluate_challenger_only(phase11_outcomes, dataset)
+        validate_phase11_challenger_evaluation(challenger_eval)
+        validate_phase11_acceptance_gates(gate_results)
+        validate_phase11_registry_entry(registry_entry)
+
+        drift_report, retraining = build_drift_and_retraining(feature_store, dataset)
+        validate_phase11_drift_report(drift_report)
+        validate_phase11_retraining_recommendation(retraining)
+
+        feature_store_path = ROOT / 'runtime' / 'learning' / 'phase11_feature_store.json'
+        label_store_path = ROOT / 'runtime' / 'learning' / 'phase11_label_store.json'
+        dataset_path = ROOT / 'runtime' / 'learning' / 'phase11_dataset.json'
+        challenger_path = ROOT / 'runtime' / 'quality' / 'phase11_challenger_report.json'
+        registry_path = ROOT / 'runtime' / 'latest' / 'model_registry_latest.json'
+        drift_path = ROOT / 'runtime' / 'quality' / 'phase11_drift_report.json'
+        retraining_path = ROOT / 'runtime' / 'latest' / 'retraining_recommendation_latest.json'
+
+        feature_store_path.write_text(json.dumps([asdict(row) for row in feature_store], indent=2), encoding='utf-8')
+        label_store_path.write_text(json.dumps([asdict(row) for row in label_store], indent=2), encoding='utf-8')
+        dataset_path.write_text(json.dumps(asdict(dataset), indent=2), encoding='utf-8')
+        challenger_path.write_text(
+            json.dumps(
+                {
+                    'challenger_evaluation': asdict(challenger_eval),
+                    'acceptance_gates': asdict(gate_results),
+                },
+                indent=2,
+            ),
+            encoding='utf-8',
+        )
+        registry_path.write_text(json.dumps(asdict(registry_entry), indent=2), encoding='utf-8')
+        drift_path.write_text(json.dumps(asdict(drift_report), indent=2), encoding='utf-8')
+        retraining_path.write_text(json.dumps(asdict(retraining), indent=2), encoding='utf-8')
+
+        files_written.extend([
+            str(feature_store_path),
+            str(label_store_path),
+            str(dataset_path),
+            str(challenger_path),
+            str(registry_path),
+            str(drift_path),
+            str(retraining_path),
+        ])
+        validations.extend([
+            'phase11_feature_store_schema',
+            'phase11_label_store_schema',
+            'phase11_temporal_split_deterministic',
+            'phase11_leakage_prevention',
+            'phase11_challenger_only_evaluation',
+            'phase11_acceptance_gates',
+            'phase11_registry_metadata',
+            'phase11_no_auto_promotion_enforced',
+            'phase11_drift_monitoring',
+            'phase11_retraining_recommendation',
+        ])
 
     checksums = {
         'config/kuwait_equities_master.csv': sha256_of_text(universe_file.read_text(encoding='utf-8')),

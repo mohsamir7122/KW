@@ -1,4 +1,4 @@
-# Architecture Hardening + Phase 10 Kuwait Market Data Feed
+# Architecture Hardening + Phase 11 Learning Promotion Guards
 
 ## Phase 2 core modules (preserved)
 - `signal_engine.py`: produces bounded signal vector per tradable equity.
@@ -32,6 +32,9 @@
 ## New Phase 10 modules
 - `market_data.py`: attempts real Kuwait market-data ingestion with explicit source-priority governance, source-status tracking, normalization/canonical mapping, fail-closed quality validation, and artifact publication.
 
+## New Phase 11 modules
+- `phase11.py`: builds deterministic 1d/5d/20d learning datasets, enforces leakage-safe temporal splits, performs challenger-only evaluation with acceptance gates, writes no-auto-promotion registry metadata, and emits drift/retraining recommendations.
+
 ## Boundary rules
 - Governance emits trust and contribution eligibility only.
 - Ranking consumes validated signal + trust once (no double counting).
@@ -44,6 +47,7 @@
 - Phase 8 rollout automation is consume-and-review only; it never mutates ranking, portfolio, monitoring, or dashboard production logic.
 - Phase 9 export layer is consume-and-export only; it never mutates ranking, portfolio, monitoring, reporting, or rollout semantics.
 - Phase 10 market data feed is ingest-and-publish only; it never performs brokerage execution or order placement.
+- Phase 11 model lifecycle outputs are recommendation-only; they never auto-promote models or mutate live ranking/portfolio semantics.
 
 ## End-to-end flow (`run_phase.py --sample-mode`)
 1. Validate universe + quarterly inputs.
@@ -80,6 +84,9 @@
 32. Attempt Phase 10 Kuwait market data fetch from official source first, then controlled fallbacks with explicit status reporting.
 33. Normalize/map rows to canonical tradable Kuwait entities; reject unresolved/invalid rows fail-closed.
 34. Publish market-data latest/quality/report artifacts and enrich run manifest with Phase 10 validations/limitations.
+35. Build Phase 11 feature/label stores with deterministic temporal train/validation/test split and leakage checks.
+36. Evaluate challenger model only, apply acceptance gates, and write registry metadata with explicit manual-review promotion state.
+37. Publish drift report and retraining recommendation artifacts; never auto-promote.
 
 ## Evaluation limitations (explicit by design)
 - This is walk-forward scaffolding, not a full institutional backtester.
@@ -137,6 +144,13 @@
 - `reports/market_data_summary.md`: human-readable market-data ingestion summary.
 - `reports/market_data_snapshot_latest.json`: report-layer copy of latest market snapshot.
 - `reports/market_data_table_latest.csv`: report-layer copy of latest market table.
+- `runtime/learning/phase11_feature_store.json`: learning feature store used for Phase 11 challenger evaluation.
+- `runtime/learning/phase11_label_store.json`: horizon labels (`1d/5d/20d`) aligned to Phase 11 dataset rows.
+- `runtime/learning/phase11_dataset.json`: deterministic temporal split + leakage checks artifact.
+- `runtime/quality/phase11_challenger_report.json`: challenger-only evaluation metrics and acceptance gate outcomes.
+- `runtime/latest/model_registry_latest.json`: model registry metadata with `auto_promotion=false`.
+- `runtime/quality/phase11_drift_report.json`: feature drift signals for monitoring.
+- `runtime/latest/retraining_recommendation_latest.json`: recommendation-only retraining action (`schedule_retraining|monitor_only`).
 
 ## Remaining later-phase work
 - richer multi-horizon outcome windows and event-aligned attribution.
